@@ -1,7 +1,10 @@
 import random
 import torch
+import yaml
 
 import numpy as np
+
+from angel_system.berkeley.data.objects.coffee_activity_objects import original_sub_steps
 
 
 class MoveCenterPts(torch.nn.Module):
@@ -231,3 +234,90 @@ class NormalizePixelPts(torch.nn.Module):
     def __repr__(self) -> str:
         detail = f"(im_w={self.im_w}, im_h={self.im_h}, num_obj_classes={self.num_obj_classes}, feat_version={self.feat_version})"
         return f"{self.__class__.__name__}{detail}"
+
+class IrrelevantClassDropout(torch.nn.Module):
+    def __init__(self, dropout_rate, actions_dict, obj_config_fn, num_obj_classes, feat_version=2):
+        """
+        :param dropout_rate: Percentage (in decimal) of irrelevant objects to remove
+            from the data
+        :param num_obj_classes: Number of object classes from the detections
+            used to generate the features
+        :param feat_version: Algorithm version used to generate the input features
+        """
+        super().__init__()
+
+        self.dropout_rate = dropout_rate
+        self.actions_dict = dict(zip(actions_dict.values(), actions_dict.keys()))
+
+        self.num_obj_classes = num_obj_classes
+        self.feat_version = feat_version
+
+        with open(obj_config_fn, "r") as stream:
+            obj_config = yaml.safe_load(stream)
+        objs = obj_config["labels"]
+        self.obj_labels = [o["label"] for o in objs]
+        self.obj_ids = [o["id"] for o in objs]
+        print("obj ids", self.obj_ids)
+
+        self.obj_dict = dict(zip(self.obj_labels, self.obj_ids))
+
+        self.act_to_objs = {}
+        for step, substep in original_sub_steps.items():
+            for sub_step in substep:
+                act = sub_step[0]
+                objs = sub_step[1]
+
+                self.act_to_objs[act] = objs
+        self.act_to_objs["background"] = [["hand"]]
+
+    def forward(self, window, targets):
+        class_ids = self.obj_ids
+        num_obj_feats = self.num_obj_classes - 2  # not including hands in count
+        num_obj_points = num_obj_feats * 2
+
+        # Distance from hand to object
+        right_dist_idx1 = 1
+        right_dist_idx2 = num_obj_points + 1
+        left_dist_idx1 = num_obj_points + 2
+        left_dist_idx2 = left_dist_idx1 + num_obj_points
+
+        # Distance between hands
+        hands_dist_idx = left_dist_idx2 + 1
+
+        # Object activations
+        obj_act_idx = hands_dist_idx + 2
+
+        for i, (features, target) in enumerate(zip(window, targets)):
+            class_ids = self.obj_ids
+
+            relevant_objs = self.act_to_objs[self.actions_dict[target]]
+            relevant_objs = list(set([obj for pair in relevant_objs for obj in pair]))
+            print("relevant objs", relevant_objs)
+            if "hand" in relevant_objs:
+                relevant_objs.remove("hand")
+                relevant_objs.append("hand (left)")
+                relevant_objs.append("hand (right)")
+
+            
+            relevant_ids = [self.obj_dict[obj] for obj in relevant_objs]
+            print(relevant_ids)
+
+            for r in relevant_ids:
+                class_ids.remove(r)
+
+            zero_class_ids = random.sample(class_ids, len(class_ids) * self.dropout_rate)
+
+            obj_ids_no_hands = self.obj_ids[3:]
+            for start_idx in [right_dist_idx1, left_dist_idx1]:
+                for class_id in zero_class_ids:
+                    print(f"ids: {obj_ids_no_hands}, class id: {class_id}")
+                    idx = obj_ids_no_hands.index(class_id)
+                    features[start_idx+idx:start_idx+idx+1] = 0
+
+            start_idx = obj_act_idx
+            for class_id in zero_class_ids:
+                idx = obj_ids_no_hands.index(class_id)
+                features[start_idx+idx] = 0
+            
+            window[i] = features
+        return window

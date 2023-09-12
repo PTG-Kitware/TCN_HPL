@@ -1,9 +1,12 @@
 
 import torch
 
+
 import numpy as np
 
 from typing import Optional, Callable, Dict, List
+
+from .augmentations import IrrelevantClassDropout
 
 class PTG_Dataset(torch.utils.data.Dataset):
     def __init__(
@@ -28,6 +31,16 @@ class PTG_Dataset(torch.utils.data.Dataset):
         self.target_transform = target_transform
         self.dataset_size = -1
         self.norm_stats = dict()
+
+        # IDK move this
+        ptg_root = "/home/local/KHQ/hannah.defazio/angel_system/"
+        obj_config_path = f"{ptg_root}/config/object_labels"
+        self.d = IrrelevantClassDropout(
+            dropout_rate=1, actions_dict=self.actions_dict, 
+            obj_config_fn=f"{obj_config_path}/recipe_coffee.yaml",
+            num_obj_classes=42, feat_version=2
+        )
+        
 
         input_frames_list = []
         target_frames_list = []
@@ -96,5 +109,8 @@ class PTG_Dataset(torch.utils.data.Dataset):
             features = self.transform(features)
         if self.target_transform is not None:
             target = self.target_transform(target)
+        
+        # idk where to put this
+        features = self.d(features, target)
         
         return features, target, mask
