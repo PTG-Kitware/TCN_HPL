@@ -1,4 +1,3 @@
-from aim import Image
 from typing import Any, Dict, Tuple
 
 import torch
@@ -13,6 +12,11 @@ from sklearn.metrics import confusion_matrix
 
 import matplotlib.pyplot as plt
 import seaborn as sns
+
+try:
+    from aim import Image
+except ImportError:
+    Image = None
 
 
 class PTGLitModule(LightningModule):
@@ -138,7 +142,7 @@ class PTGLitModule(LightningModule):
             p.transpose(2, 1).contiguous().view(-1, self.hparams.num_classes),
             y.view(-1),
         )
-                    
+
         loss += self.hparams.smoothing_loss * torch.mean(
             torch.clamp(
                 self.mse(
@@ -227,7 +231,7 @@ class PTGLitModule(LightningModule):
 
         all_targets = torch.concat(self.validation_step_outputs_target)
         all_preds = torch.concat(self.validation_step_outputs_pred)
-        
+
         # Create confusion matrix
         cm = confusion_matrix(
             all_targets.cpu().numpy(), all_preds.cpu().numpy(),
@@ -244,14 +248,15 @@ class PTGLitModule(LightningModule):
         ax.set_title(f'CM Validation Epoch {self.current_epoch}')
         ax.xaxis.set_ticklabels(self.classes, rotation=90)
         ax.yaxis.set_ticklabels(self.classes, rotation=0)
-        
-        self.logger.experiment.track(Image(fig), name=f'CM Validation Epoch')
+
+        if Image is not None:
+            self.logger.experiment.track(Image(fig), name=f'CM Validation Epoch')
 
         plt.close(fig)
-        
+
         self.validation_step_outputs_target.clear()
         self.validation_step_outputs_pred.clear()
-        
+
 
     def test_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
         """Perform a single test step on a batch of data from the test set.
@@ -267,10 +272,10 @@ class PTGLitModule(LightningModule):
         self.test_acc(preds, targets[:,-1])
         self.log("test/loss", self.test_loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log("test/acc", self.test_acc, on_step=False, on_epoch=True, prog_bar=True)
-        
+
         self.validation_step_outputs_target.append(targets[:,-1])
         self.validation_step_outputs_pred.append(preds)
-        
+
 
     def on_test_epoch_end(self) -> None:
         """Lightning hook that is called when a test epoch ends."""
@@ -285,7 +290,7 @@ class PTGLitModule(LightningModule):
             labels=self.class_ids,
             normalize="true"
         )
-        
+
         fig, ax = plt.subplots(figsize=(20,20))
         sns.heatmap(cm, annot=True, ax=ax, fmt=".2f")
 
@@ -296,7 +301,8 @@ class PTGLitModule(LightningModule):
         ax.xaxis.set_ticklabels(self.classes, rotation=90)
         ax.yaxis.set_ticklabels(self.classes, rotation=0)
 
-        self.logger.experiment.track(Image(fig), name=f'CM Test Epoch')
+        if Image is not None:
+            self.logger.experiment.track(Image(fig), name=f'CM Test Epoch')
 
         plt.close(fig)
 
