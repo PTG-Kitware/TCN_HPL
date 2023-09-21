@@ -62,6 +62,7 @@ class PTGLitModule(LightningModule):
         data_dir: str,
         num_classes: int,
         compile: bool,
+        mapping_file_name: str = "mapping.txt"
     ) -> None:
         """Initialize a `PTGLitModule`.
 
@@ -79,7 +80,7 @@ class PTGLitModule(LightningModule):
         self.net = net
 
         # Get Action Names
-        mapping_file = f"{self.hparams.data_dir}/mapping.txt"
+        mapping_file = f"{self.hparams.data_dir}/{mapping_file_name}"
         file_ptr = open(mapping_file, "r")
         actions = file_ptr.read().split("\n")[:-1]
         file_ptr.close()
@@ -105,7 +106,6 @@ class PTGLitModule(LightningModule):
 
         # for tracking best so far validation accuracy
         self.val_acc_best = MaxMetric()
-
 
         self.validation_step_outputs_pred = []
         self.validation_step_outputs_target = []
@@ -257,7 +257,6 @@ class PTGLitModule(LightningModule):
         self.validation_step_outputs_target.clear()
         self.validation_step_outputs_pred.clear()
 
-
     def test_step(self, batch: Tuple[torch.Tensor, torch.Tensor], batch_idx: int) -> None:
         """Perform a single test step on a batch of data from the test set.
 
@@ -275,7 +274,6 @@ class PTGLitModule(LightningModule):
 
         self.validation_step_outputs_target.append(targets[:,-1])
         self.validation_step_outputs_pred.append(preds)
-
 
     def on_test_epoch_end(self) -> None:
         """Lightning hook that is called when a test epoch ends."""
