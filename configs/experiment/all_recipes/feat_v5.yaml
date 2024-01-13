@@ -1,0 +1,63 @@
+# @package _global_
+
+# to execute this experiment run:
+# python train.py experiment=example
+
+defaults:
+  - override /data: ptg
+  - override /model: ptg
+  - override /callbacks: default
+  - override /trainer: gpu
+  - override /paths: default
+  - override /logger: aim
+
+# all parameters below will be merged with parameters from default configurations set above
+# this allows you to overwrite only specified parameters
+exp_name: "yolo_all_recipes_additional_objs_bkgd_sample_rate_2"
+
+tags: ["coffee+tea+dq+oatmeal+pinwheel", "ms_tcn"]
+
+seed: 12345
+
+trainer:
+  min_epochs: 50
+  max_epochs: 150
+
+
+model:
+  compile: false
+
+  net:
+    dim: 859 # length of feature vector
+
+data:
+  num_classes: 58 # activities: includes background
+  batch_size: 1024
+  num_workers: 0
+  epoch_length: 20000
+  window_size: 30
+  sample_rate: 2
+  
+  all_transforms:
+    train_order: ["MoveCenterPts", "NormalizePixelPts"]
+    test_order: ["NormalizePixelPts"]
+
+    MoveCenterPts:
+        feat_version: 5
+        num_obj_classes: 124 # not including background
+    NormalizeFromCenter:
+      feat_version: 5
+    NormalizePixelPts:
+      feat_version: 5
+      num_obj_classes: 124 # not including background
+
+paths:
+  data_dir: "/data/PTG/cooking//TCN_data/coffee+tea+dq+oatmeal+pinwheel/yolo_all_recipes_additional_objs_bkgd_feat_v5"
+  root_dir: "/data/PTG/cooking/training/activity_classifier/TCN_HPL"
+
+logger:
+  aim:
+    experiment: ${exp_name}
+    capture_terminal_logs: true
+
+task_name: ${exp_name}
