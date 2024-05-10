@@ -29,7 +29,7 @@ model:
   compile: false
 
   net:
-    dim: 297 # length of feature vector when top_k_objects=1
+    dim: 209 # length of feature vector when top_k_objects=1
     #dim: 501 # length of feature vector when top_k_objects=2
 
 
