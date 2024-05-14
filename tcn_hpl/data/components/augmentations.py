@@ -4,7 +4,7 @@ import torch
 import numpy as np
 
 
-from angel_system.activity_classification.utils import feature_version_to_options
+# from angel_system.activity_classification.utils import feature_version_to_options
 
 class MoveCenterPts(torch.nn.Module):
     """Simulate moving the center points of the bounding boxes by
@@ -246,16 +246,17 @@ class NormalizePixelPts(torch.nn.Module):
         self.top_k_objects = top_k_objects
 
         self.feat_version = feat_version
-        self.opts = feature_version_to_options(self.feat_version)
-        print(self.opts)
+        
+        # self.opts = feature_version_to_options(self.feat_version)
+        # print(self.opts)
 
-        self.use_activation = self.opts.get("use_activation", False)
-        print("use_activation", self.use_activation)
-        self.use_hand_dist = self.opts.get("use_hand_dist", False)
-        self.use_intersection = self.opts.get("use_intersection", False)
-        self.use_center_dist = self.opts.get("use_center_dist", False)
-        self.use_joint_hand_offset = self.opts.get("use_joint_hand_offset", False)
-        self.use_joint_object_offset = self.opts.get("use_joint_object_offset", False)
+        # self.use_activation = self.opts.get("use_activation", False)
+        # print("use_activation", self.use_activation)
+        # self.use_hand_dist = self.opts.get("use_hand_dist", False)
+        # self.use_intersection = self.opts.get("use_intersection", False)
+        # self.use_center_dist = self.opts.get("use_center_dist", False)
+        # self.use_joint_hand_offset = self.opts.get("use_joint_hand_offset", False)
+        # self.use_joint_object_offset = self.opts.get("use_joint_object_offset", False)
     
     def forward(self, features):
         for i in range(features.shape[0]):
