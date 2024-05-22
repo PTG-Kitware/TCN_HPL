@@ -1,0 +1,151 @@
+# @package _global_
+
+# to execute this experiment run:
+# python train.py experiment=example
+topic: "medical"
+task: "m3"
+feature_version: 7
+
+defaults:
+  - override /data: ptg
+  - override /model: ptg
+  - override /callbacks: default
+  - override /trainer: gpu
+  - override /paths: default
+  - override /logger: aim
+
+# all parameters below will be merged with parameters from default configurations set above
+# this allows you to overwrite only specified parameters
+exp_name: "p_m3_feat_v6_with_pose_v3_aug_False_reshuffle_True"
+
+
+tags: ["m3", "ms_tcn"]
+
+seed: 12345
+
+trainer:
+  min_epochs: 50
+  max_epochs: 500
+
+
+model:
+  compile: false
+
+  net:
+    dim: 297 # length of feature vector
+
+data:
+  num_classes: 6 # activities: includes background
+  batch_size: 512
+  num_workers: 12
+  epoch_length: 20000
+  window_size: 45
+  sample_rate: 1
+  
+  all_transforms:
+    train_order: [] #["MoveCenterPts", "NormalizePixelPts"]
+    test_order: [] #["NormalizePixelPts"]
+
+    # MoveCenterPts:
+    #     feat_version: 6
+    #     num_obj_classes: 4 # not including background
+    # NormalizeFromCenter:
+    #   feat_version: 6
+    # NormalizePixelPts:
+    #   feat_version: 6
+    #   num_obj_classes: 4 # not including background
+
+# data_gen:
+#   reshuffle_datasets: true
+#   augment: false
+#   num_augs: 5
+#   feat_type: "with_pose" #[no_pose, with_pose, only_hands_joints, only_objects_joints]
+#   filter_black_gloves: false
+#   filter_blue_gloves: false
+#   train_vid_ids: [1, 2, 4, 5, 6, 8, 9, 11, 12, 14, 15, 16, 17, 19, 20, 21,
+#                   22, 23, 24, 26, 28, 29, 30, 31, 33, 34, 35, 36, 37, 38, 39, 40,
+#                   42, 43, 44, 45, 46, 48, 49, 51, 52, 53, 54]
+#   val_vid_ids: [3, 7, 10, 18, 27, 32, 41]
+#   test_vid_ids: [50, 13, 47, 25]
+#   names_black_gloves: [22,23,26,24,25,27,29,28,41,42,43,44,45,46,47,48,49,78,
+#                        79,84,88,90,80,81,82,83,85,86,87,89,91,99,110,111,121,113,115,116]
+#   names_blue_gloves: [132,133,50,51,54,55,56,52,61,59,53,57,62,65,66,67,68,69,
+#                       58,60,63,64,125,126,127,129,131,134,135,136,128,130,137,
+#                       138,139]
+
+
+data_gen:
+  top_k_objects: 1
+  pose_repeat_rate: 7.5 # ${IMAGE_HZ} / ${POSE_HZ}
+  
+  data_type: "pro"
+  dataset_kwcoco: "/data/PTG/medical/training/yolo_object_detector/detect/m3_all/m3_all_all_obj_results_with_dets_and_pose.mscoco.json"
+  train_vid_ids: [1, 2, 4, 5, 6, 8, 9, 11, 12, 14, 15, 16, 17, 19, 20, 21,
+                  22, 23, 24, 26, 28, 29, 30, 31, 33, 34, 35, 36, 37, 38, 39, 40,
+                  42, 43, 44, 45, 46, 48, 49, 51, 52, 53, 54]
+  val_vid_ids: [3, 7, 10, 18, 27, 32, 41]
+  test_vid_ids: [50, 13, 47, 25]
+  names_black_gloves: []
+  names_blue_gloves: []
+  #data_type: "lab"
+  #dataset_kwcoco: "/data/PTG/medical/training/yolo_object_detector/detect/r18_all_bbn_lab_data/r18_all_bbn_lab_data_all_obj_results.mscoco.json"
+  #train_vid_ids: [1, 2, 3, 4, 5, 6, 7, 8]
+  #val_vid_ids: [9]
+  #test_vid_ids: [10]
+  # names_black_gloves: [22,23,26,24,25,27,29,28,41,42,43,44,45,46,47,48,49,78,
+                      #  79,84,88,90,80,81,82,83,85,86,87,89,91,99,110,111,121,113,115,116]
+  # names_blue_gloves: [132,133,50,51,54,55,56,52,61,59,53,57,62,65,66,67,68,69,
+                      # 58,60,63,64,125,126,127,129,131,134,135,136,128,130,137,
+                      # 138,139]
+
+  filter_black_gloves: false
+  filter_blue_gloves: false
+
+  activity_config_fn: "/home/local/KHQ/christopher.funk/code/angel_system/config/activity_labels/medical/m3.yaml"
+
+  # This matches the folder name created in the data generator
+  exp_ext: "_NEW_ORDER_fix_overlap_gt" # anything unique about this run that isn't already in ``exp_name``
+  exp_name: "${task}_${data_gen.data_type}_data_top_${data_gen.top_k_objects}_objs_feat_v${feature_version}_pose_rate_${data_gen.pose_repeat_rate}${data_gen.exp_ext}"
+
+
+# TRAINING
+data:
+  num_classes: 6 # activities: includes background
+  batch_size: 512
+  num_workers: 12
+  epoch_length: 20000
+  window_size: 25
+  sample_rate: 2 # ${IMAGE_HZ} / ${OBJECT_DET_HZ}
+
+paths:
+  data_dir: "/data/PTG/medical/training/activity_classifier/TCN_data/${task}/${data_gen.exp_name}"
+  root_dir: "/data/PTG/medical/training/activity_classifier/TCN_HPL/"
+
+  # data_dir: "/data/PTG/TCN_data/m2/p_m2_tqt_data_test_feat_v6_with_pose_v2_aug_False_reshuffle_True" #[_v2_aug_False]
+  # data_dir: "/data/PTG/TCN_data/m3/p_m3_feat_v6_with_pose_v3_aug_False_reshuffle_True" #[_v2_aug_False]
+  # data_dir: "/data/PTG/TCN_data/m2/p_m2_feat_v6_no_pose_v3_aug_False_reshuffle_True" #[_v2_aug_False]
+  # data_dir: "/data/PTG/TCN_data/m2/p_m2_feat_v6_no_pose_v3_aug_False_reshuffle_True" #[_v2_aug_False]
+  # data_dir: "/data/PTG/TCN_data/m2/p_m2_tqt_data_test_feat_v6_with_pose_v2_aug_False_reshuffle_False" #[_v2_aug_False]
+  # data_dir: "/data/PTG/TCN_data/m2/p_m2_tqt_data_test_feat_v6_with_pose_v2_aug_True_reshuffle_True" #[_v2_aug_False]
+  # data_dir: "/data/PTG/TCN_data/m2/p_m2_tqt_data_test_feat_v6_with_pose_v2_aug_True_reshuffle_False" #[_v2_aug_False]
+
+  # root_dir: "/data/PTG/medical/training/activity_classifier/TCN_HPL"
+  # root_dir: "/data/users/peri.akiva/PTG/medical/training/activity_classifier/TCN_HPL"
+
+  # dataset_kwcoco: "/data/users/peri.akiva/datasets/ptg/m2_good_images_only_no_amputation_stump_train_activity_obj_results_with_dets_and_pose.mscoco.json"
+  # dataset_kwcoco: "/data/users/peri.akiva/datasets/ptg/m3_all_all_obj_results_with_dets_and_pose.mscoco.json"
+  # activity_config_root: "/home/local/KHQ/peri.akiva/projects/angel_system/config/activity_labels"
+  # activity_config_fn: "${paths.activity_config_root}/${task}"
+  # ptg_root: "/home/local/KHQ/peri.akiva/angel_system"
+  # activity_config_path: "${paths.ptg_root}/config/activity_labels/medical"
+  # output_data_dir_root: "/data/PTG/TCN_data"
+  # # bbn_data_root: "{bbn_data_dir}/Release_v0.5/v0.56"
+  # bbn_data_dir: "/data/PTG/medical/bbn_data"
+
+
+logger:
+  aim:
+    experiment: ${exp_name}
+    capture_terminal_logs: true
+
+task_name: ${exp_name}
