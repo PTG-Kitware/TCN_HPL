@@ -16,8 +16,7 @@ def standarize_online_inputs(inputs):
 def standarize_offline_inputs(data):
     dset = data[0]
     frames = data[1]
-    
-    
+
 
 def collect_inputs(data, offline=True):
     """
@@ -35,10 +34,8 @@ def collect_inputs(data, offline=True):
 
     """
     if offline:
-        # Fetch from offline data source
         inputs = standarize_offline_inputs(data)
     else:
-        # Fetch from real-time source (dummy logic here, replace with actual)
         inputs = standarize_online_inputs(data)
 
     return inputs
@@ -54,7 +51,6 @@ def define_tcn_vector(inputs):
     Returns:
         tcn_vector: The defined TCN vector.
     """
-    # Example TCN vector calculation (modify according to your actual logic)
     tcn_vector = torch.tensor(inputs).float()  # Dummy transformation
     return tcn_vector
 
