@@ -126,15 +126,27 @@ class PTGLitModule(LightningModule):
         self.test_acc = Accuracy(
             task="multiclass", average="weighted", num_classes=num_classes
         )
-        
-        self.val_f1 = F1Score(num_classes=num_classes, average="none", task="multiclass")
-        self.test_f1 = F1Score(num_classes=num_classes, average="none", task="multiclass")
-        
-        self.val_recall = Recall(num_classes=num_classes, average="none", task="multiclass")
-        self.test_recall = Recall(num_classes=num_classes, average="none", task="multiclass")
-        
-        self.val_precision = Precision(num_classes=num_classes, average="none", task="multiclass")
-        self.test_precision = Precision(num_classes=num_classes, average="none", task="multiclass")
+
+        self.val_f1 = F1Score(
+            num_classes=num_classes, average="none", task="multiclass"
+        )
+        self.test_f1 = F1Score(
+            num_classes=num_classes, average="none", task="multiclass"
+        )
+
+        self.val_recall = Recall(
+            num_classes=num_classes, average="none", task="multiclass"
+        )
+        self.test_recall = Recall(
+            num_classes=num_classes, average="none", task="multiclass"
+        )
+
+        self.val_precision = Precision(
+            num_classes=num_classes, average="none", task="multiclass"
+        )
+        self.test_precision = Precision(
+            num_classes=num_classes, average="none", task="multiclass"
+        )
 
         # for averaging loss across batches
         self.train_loss = MeanMetric()
@@ -477,9 +489,7 @@ class PTGLitModule(LightningModule):
         windowed_ys = torch.tensor(windowed_ys).to(targets)
 
         self.val_acc(preds, targets[:, -1])
-        
-        
-        
+
         self.log("val/loss", self.val_loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log("val/acc", self.val_acc, on_step=False, on_epoch=True, prog_bar=True)
 
@@ -507,23 +517,20 @@ class PTGLitModule(LightningModule):
             # log `val_acc_best` as a value through `.compute()` method, instead of as a metric object
             # otherwise metric would be reset by lightning after each epoch
             best_val_acc = self.val_acc_best.compute()
-            
+
             if best_val_acc > current_best_val_acc:
                 val_f1_score = self.val_f1(all_preds, all_targets)
                 val_recall_score = self.val_recall(all_preds, all_targets)
                 val_precision_score = self.val_precision(all_preds, all_targets)
-                
+
                 # print(f"preds: {all_preds}")
                 # print(f"all_targets: {all_targets}")
                 print(f"validation f1 score: {val_f1_score}")
                 print(f"validation recall score: {val_recall_score}")
                 print(f"validation precision score: {val_precision_score}")
-                
+
             self.log("val/acc_best", best_val_acc, sync_dist=True, prog_bar=True)
 
-
-        
-        
         # Load val vidoes
         if self.val_frames is None:
             self.val_frames = {}

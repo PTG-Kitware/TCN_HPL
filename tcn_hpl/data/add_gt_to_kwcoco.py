@@ -1,15 +1,32 @@
-import kwcoco
-from angel_system.data.medical.data_paths import TASK_TO_NAME
-from angel_system.data.medical.data_paths import LAB_TASK_TO_NAME
-import yaml
 import argparse
+
+import kwcoco
+import numpy as np
+import numpy.typing as npt
 import tcn_hpl.utils.utils as utils
 import ubelt as ub
+import yaml
+
+from angel_system.data.medical.data_paths import LAB_TASK_TO_NAME
 
 
-def text_to_labels(text_file: str, num_frames: int, task: str, mapping: dict):
-    # set background to everything first
-    activity_gt_list = [0 for x in range(num_frames)]
+def text_to_labels(
+    text_file: str, num_frames: int, task: str, mapping: dict
+) -> npt.NDArray[int]:
+    """
+    Convert a "skill_labels_by_frame" text truth file from BBN into labels for
+    the given task and number of frames.
+
+    :param text_file: Filesystem path to the BBN activity text file.
+    :param num_frames: Number of frames in the video the truth file is related
+        to.
+    :param task: The identifying name of the task, e.g. "m2", "m3", "r18", etc.
+    :param mapping: Mapping of task step descriptions to the integer label
+        value for that step.
+    :return:
+    """
+    # set background to everything first (assuming value 0).
+    activity_gt_list = np.zeros(num_frames)
     f = open(text_file, "r")
     text = f.read()
     f.close()
@@ -37,7 +54,6 @@ def text_to_labels(text_file: str, num_frames: int, task: str, mapping: dict):
             print("Max frame in GT is larger than number of frames in the video")
 
         for label_index in range(start_frame, min(end_frame - 1, num_frames)):
-            # print(f"label_index: {label_index}")
             activity_gt_list[label_index] = gt_label
 
     return activity_gt_list
@@ -64,10 +80,8 @@ def main(config_path: str):
         i = label["id"]
         label_str = label["label"]
         if "description" in label.keys():
-            # activity_labels_desc_mapping[label["description"]] = label["label"]
             activity_labels_desc_mapping[label["description"]] = label["id"]
         elif "full_str" in label.keys():
-            # activity_labels_desc_mapping[label["full_str"]] = label["label"]
             activity_labels_desc_mapping[label["full_str"]] = label["id"]
             activity_labels_label_mapping[label_str] = label["id"]
         if label_str == "done":
@@ -103,13 +117,9 @@ def main(config_path: str):
                 im = dset.index.imgs[img_id]
                 frame_index = int(im["frame_index"])
                 dset.index.imgs[img_id]["activity_gt"] = activity_gt_list[frame_index]
-            # print(f"video: {video}")
 
     dset.dump("test.mscoco.json", newlines=True)
-    # print(raw_data_root)
-    # print(activity_labels)
     print(activity_labels_desc_mapping)
-    # print(paths)
 
 
 if __name__ == "__main__":

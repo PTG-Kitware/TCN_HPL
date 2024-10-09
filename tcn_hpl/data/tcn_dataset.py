@@ -73,12 +73,13 @@ class TCNDataset(Dataset):
         # for offline training, pre-cut videos into clips according to window size for easy batching
         self.frames = []
 
+        vid_list = list(self.dset.index.videos.keys())
         logger.info(
-            f"Generating dataset with {len(list(self.dset.index.videos.keys()))} videos"
+            f"Generating dataset with {len(vid_list)} videos"
         )
         pber = tqdm(
-            self.dset.index.videos.keys(),
-            total=len(list(self.dset.index.videos.keys())),
+            vid_list,
+            total=len(vid_list),
         )
         for vid in pber:
             video_dict = self.dset.index.videos[vid]
