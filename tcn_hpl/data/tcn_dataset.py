@@ -56,7 +56,6 @@ def define_tcn_vector(inputs):
 
 
 class TCNDataset(Dataset):
-
     def __init__(self, kwcoco_path: str, sample_rate: int, window_size: int):
         """
         Initializes the dataset.
@@ -74,15 +73,20 @@ class TCNDataset(Dataset):
         # for offline training, pre-cut videos into clips according to window size for easy batching
         self.frames = []
 
-        logger.info(f"Generating dataset with {len(list(self.dset.index.videos.keys()))} videos")
-        pber = tqdm(self.dset.index.videos.keys(), total=len(list(self.dset.index.videos.keys())))
+        logger.info(
+            f"Generating dataset with {len(list(self.dset.index.videos.keys()))} videos"
+        )
+        pber = tqdm(
+            self.dset.index.videos.keys(),
+            total=len(list(self.dset.index.videos.keys())),
+        )
         for vid in pber:
             video_dict = self.dset.index.videos[vid]
 
             vid_frames = self.dset.index.vidid_to_gids[vid]
 
-            for index in range(0, len(vid_frames)-window_size-1, sample_rate):
-                video_slice = vid_frames[index: index+window_size]
+            for index in range(0, len(vid_frames) - window_size - 1, sample_rate):
+                video_slice = vid_frames[index : index + window_size]
                 window_frame_dicts = [self.dset.index.imgs[gid] for gid in video_slice]
 
                 # start_frame = window_frame_dicts[0]['frame_index']
@@ -122,12 +126,10 @@ class TCNDataset(Dataset):
 
 
 if __name__ == "__main__":
-# Example usage:
+    # Example usage:
     kwcoco_path = "/data/PTG/medical/training/yolo_object_detector/detect/r18_all/r18_all_all_obj_results_with_dets_and_pose.mscoco.json"
 
-    dataset = TCNDataset(kwcoco_path=kwcoco_path,
-                         sample_rate=1,
-                         window_size=25)
+    dataset = TCNDataset(kwcoco_path=kwcoco_path, sample_rate=1, window_size=25)
 
     print(f"dataset: {len(dataset)}")
     data_loader = torch.utils.data.DataLoader(dataset, batch_size=4, shuffle=True)
