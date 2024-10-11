@@ -10,6 +10,7 @@ from pytorch_lightning import LightningModule
 
 from torchmetrics import MaxMetric, MeanMetric
 from torchmetrics.classification.accuracy import Accuracy
+from torchmetrics.classification import F1Score, Recall, Precision
 from torchmetrics.classification import MulticlassConfusionMatrix
 from sklearn.metrics import confusion_matrix
 
@@ -124,6 +125,27 @@ class PTGLitModule(LightningModule):
         )
         self.test_acc = Accuracy(
             task="multiclass", average="weighted", num_classes=num_classes
+        )
+
+        self.val_f1 = F1Score(
+            num_classes=num_classes, average="none", task="multiclass"
+        )
+        self.test_f1 = F1Score(
+            num_classes=num_classes, average="none", task="multiclass"
+        )
+
+        self.val_recall = Recall(
+            num_classes=num_classes, average="none", task="multiclass"
+        )
+        self.test_recall = Recall(
+            num_classes=num_classes, average="none", task="multiclass"
+        )
+
+        self.val_precision = Precision(
+            num_classes=num_classes, average="none", task="multiclass"
+        )
+        self.test_precision = Precision(
+            num_classes=num_classes, average="none", task="multiclass"
         )
 
         # for averaging loss across batches
@@ -467,6 +489,7 @@ class PTGLitModule(LightningModule):
         windowed_ys = torch.tensor(windowed_ys).to(targets)
 
         self.val_acc(preds, targets[:, -1])
+
         self.log("val/loss", self.val_loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log("val/acc", self.val_acc, on_step=False, on_epoch=True, prog_bar=True)
 
@@ -480,13 +503,6 @@ class PTGLitModule(LightningModule):
         "Lightning hook that is called when a validation epoch ends."
         acc = self.val_acc.compute()  # get current val acc
 
-        if self.current_epoch >= 15:
-            self.val_acc_best(acc)  # update best so far val acc
-            # log `val_acc_best` as a value through `.compute()` method, instead of as a metric object
-            # otherwise metric would be reset by lightning after each epoch
-            best_val_acc = self.val_acc_best.compute()
-            self.log("val/acc_best", best_val_acc, sync_dist=True, prog_bar=True)
-
         all_targets = torch.cat(self.validation_step_outputs_target)  # shape: #frames
         all_preds = torch.cat(self.validation_step_outputs_pred)  # shape: #frames
         all_probs = torch.cat(
@@ -494,6 +510,26 @@ class PTGLitModule(LightningModule):
         )  # shape (#frames, #act labels)
         all_source_vids = torch.cat(self.validation_step_outputs_source_vid)
         all_source_frames = torch.cat(self.validation_step_outputs_source_frame)
+
+        if self.current_epoch >= 15:
+            current_best_val_acc = self.val_acc_best.compute()
+            self.val_acc_best(acc)  # update best so far val acc
+            # log `val_acc_best` as a value through `.compute()` method, instead of as a metric object
+            # otherwise metric would be reset by lightning after each epoch
+            best_val_acc = self.val_acc_best.compute()
+
+            if best_val_acc > current_best_val_acc:
+                val_f1_score = self.val_f1(all_preds, all_targets)
+                val_recall_score = self.val_recall(all_preds, all_targets)
+                val_precision_score = self.val_precision(all_preds, all_targets)
+
+                # print(f"preds: {all_preds}")
+                # print(f"all_targets: {all_targets}")
+                print(f"validation f1 score: {val_f1_score}")
+                print(f"validation recall score: {val_recall_score}")
+                print(f"validation precision score: {val_precision_score}")
+
+            self.log("val/acc_best", best_val_acc, sync_dist=True, prog_bar=True)
 
         # Load val vidoes
         if self.val_frames is None:

@@ -73,7 +73,7 @@ data:
   num_workers: 12
   epoch_length: 20000
   window_size: 25
-  sample_rate: 2
+  sample_rate: 1
 
   
   all_transforms:

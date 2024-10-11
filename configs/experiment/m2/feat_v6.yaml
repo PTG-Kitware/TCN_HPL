@@ -86,7 +86,7 @@ data:
   num_workers: 16
   epoch_length: 20000
   window_size: 25
-  sample_rate: 2
+  sample_rate: 1
   
   all_transforms:
     train_order: [] #["MoveCenterPts", "NormalizePixelPts"]
