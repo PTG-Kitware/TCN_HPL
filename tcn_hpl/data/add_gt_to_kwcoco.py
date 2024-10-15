@@ -1,62 +1,13 @@
 import argparse
 
 import kwcoco
-import numpy as np
-import numpy.typing as npt
 import tcn_hpl.utils.utils as utils
 import ubelt as ub
 import yaml
 
 from angel_system.data.medical.data_paths import LAB_TASK_TO_NAME
 
-
-def text_to_labels(
-    text_file: str, num_frames: int, task: str, mapping: dict
-) -> npt.NDArray[int]:
-    """
-    Convert a "skill_labels_by_frame" text truth file from BBN into labels for
-    the given task and number of frames.
-
-    :param text_file: Filesystem path to the BBN activity text file.
-    :param num_frames: Number of frames in the video the truth file is related
-        to.
-    :param task: The identifying name of the task, e.g. "m2", "m3", "r18", etc.
-    :param mapping: Mapping of task step descriptions to the integer label
-        value for that step.
-    :return:
-    """
-    # set background to everything first (assuming value 0).
-    activity_gt_list = np.zeros(num_frames)
-    f = open(text_file, "r")
-    text = f.read()
-    f.close()
-    text = text.replace("\n", "\t")
-    text_list = text.split("\t")
-    if text_list[-1] == "":
-        text_list = text_list[:-1]
-
-    # this check handles inconsistencies in the GT we get from BBN
-    if task == "r18" or task == "m3":
-        jump = 4
-    elif task == "m2" or task == "m5":
-        jump = 3
-
-    for index in range(0, len(text_list), jump):
-        triplet = text_list[index : index + jump]
-        start_frame = int(triplet[0])
-        end_frame = int(triplet[1])
-        desc = triplet[jump - 1]
-
-        gt_label = mapping[desc]
-
-        if end_frame - 1 > num_frames:
-            ### address issue with GT activity labels
-            print("Max frame in GT is larger than number of frames in the video")
-
-        for label_index in range(start_frame, min(end_frame - 1, num_frames)):
-            activity_gt_list[label_index] = gt_label
-
-    return activity_gt_list
+from tcn_hpl.data.utils.bbn import convert_truth_to_array
 
 
 def main(config_path: str):
@@ -109,8 +60,8 @@ def main(config_path: str):
             image_ids = dset.index.vidid_to_gids[video_id]
             num_frames = len(image_ids)
 
-            activity_gt_list = text_to_labels(
-                gt_text, num_frames, task_name, activity_labels_desc_mapping
+            activity_gt_list = convert_truth_to_array(
+                gt_text, num_frames, activity_labels_desc_mapping
             )
 
             for index, img_id in enumerate(image_ids):
