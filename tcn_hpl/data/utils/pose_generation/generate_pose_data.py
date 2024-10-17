@@ -94,9 +94,6 @@ def setup_detectron_cfg(
         cfg.MODEL.WEIGHTS = model_checkpoint_filepath
     if device is not None:
         cfg.MODEL.DEVICE = device
-    # TODO: Does setting this change performance to a meaningful degree?
-    # cfg.INPUT.MIN_SIZE_TEST = 768
-    # cfg.INPUT.MAX_SIZE_TEST = 768
     cfg.freeze()
     return cfg
 
@@ -222,7 +219,7 @@ class PosesGenerator(object):
         if boxes is not None:
             for bbox, score, cls_idx in zip(boxes, scores, classes):
                 # Only predict poses for those classes that support it.
-                if cls_idx in self.pose_pred_classes and score >= self.det_conf_thresh:
+                if cls_idx in self.pose_pred_classes:
                     person_results = [{"bbox": bbox}]
                     pose_results, returned_outputs = inference_top_down_pose_model(
                         model=self.pose_model,
@@ -418,6 +415,15 @@ class PosesGenerator(object):
     show_default=True,
     help="The confidence threshold to use for the bounding-box detector."
 )
+@click.option(
+    "--checkpoint-interval", "checkpoint_interval",
+    type=int,
+    show_default=True,
+    help=(
+        "How often (in frames) to save a checkpoint of the pose estimator's "
+        "output."
+    ),
+)
 # TODO: Keypoint confidence threshold.
 def main(
     input_coco_filepath: Path,
@@ -429,6 +435,7 @@ def main(
     detector_device: str,
     pose_device: str,
     confidence_threshold: float,
+    checkpoint_interval: Optional[int],
 ):
     """
     Predict poses for objects in videos/images specified by the input COCO
@@ -451,21 +458,24 @@ def main(
     """
     input_dset = kwcoco.CocoDataset(input_coco_filepath)
 
-    imgs_processed = 0
 
-    def img_done_cb(out_dset: kwcoco.CocoDataset) -> None:
-        nonlocal imgs_processed
-        imgs_processed += 1
-        if (imgs_processed % 10000) == 0:
-            intermediate_out_path = (
-                output_coco_filepath.parent / output_coco_filepath.with_suffix(f".{imgs_processed}{output_coco_filepath.suffix}")
-            )
-            intermediate_out_path.parent.mkdir(parents=True, exist_ok=True)
-            out_dset.dump(intermediate_out_path, newlines=True)
-            print(
-                f"Saved intermediate dataset at index {imgs_processed} to: "
-                f"{intermediate_out_path}"
-            )
+    img_done_cb = None
+    if checkpoint_interval is not None:
+        imgs_processed = 0
+
+        def img_done_cb(out_dset: kwcoco.CocoDataset) -> None:
+            nonlocal imgs_processed
+            imgs_processed += 1
+            if (imgs_processed % checkpoint_interval) == 0:
+                intermediate_out_path = (
+                    output_coco_filepath.parent / output_coco_filepath.with_suffix(f".{imgs_processed}{output_coco_filepath.suffix}")
+                )
+                intermediate_out_path.parent.mkdir(parents=True, exist_ok=True)
+                out_dset.dump(intermediate_out_path, newlines=True)
+                print(
+                    f"Saved intermediate dataset at index {imgs_processed} to: "
+                    f"{intermediate_out_path}"
+                )
 
     pg = PosesGenerator(
         det_config_file=detector_config.as_posix(),
@@ -479,7 +489,7 @@ def main(
     output_dset = pg.predict_coco(input_dset, img_done_cb)
     output_dset.dump(
         output_coco_filepath,
-        indent=True,
+        newlines=True,
     )
 
 
