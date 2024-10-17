@@ -323,8 +323,16 @@ class PosesGenerator(object):
             img = read_image(img_path, format="BGR")
             boxes, scores, classes, keypoints_list = self.predict_single(img)
 
+            # We will need non-numpy data types to insert into the structure to
+            # follow JSON compliance.
+            boxes_list = boxes.tolist()
+            scores_list = scores.tolist()
+            classes_list = classes.tolist()
+
             # Construct annotations for predictions.
-            for box, score, cls_idx, kp_mat in zip(boxes, scores, classes, keypoints_list):
+            for box, score, cls_idx, kp_mat in zip(
+                boxes_list, scores_list, classes_list, keypoints_list
+            ):
                 # Convert keypoints from scored XY coordinates to the COCO
                 # notation with visibility.
                 kp_kw = {}
@@ -334,7 +342,7 @@ class PosesGenerator(object):
                     # visibility flag v defined as v=0: not labeled (in
                     # which case x=y=0), v=1: labeled but not visible, and
                     # v=2: labeled and visible.
-                    for kp in kp_mat:
+                    for kp in kp_mat.tolist():
                         # TODO: Filter keypoints if present by a threshold?
                         kp_vals.extend([*kp[:2], 2])
                     kp_kw["keypoints"] = kp_vals
@@ -342,7 +350,7 @@ class PosesGenerator(object):
                 out_dset.add_annotation(
                     image_id=img_id,
                     category_id=cls_idx,
-                    bbox=box.tolist(),
+                    bbox=box,
                     score=score,
                     **kp_kw,
                 )
