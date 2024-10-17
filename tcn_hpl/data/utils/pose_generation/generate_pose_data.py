@@ -105,8 +105,10 @@ class PosesGenerator(object):
             E.g. `python-tpl/TCN_HPL/tcn_hpl/data/utils/pose_generation/configs/medic_pose.yaml`
         pose_config_file:
             Base configuration for the pose model.
-        confidence_threshold:
+        det_confidence_threshold:
             Optional confidence threshold to apply to detections.
+        keypoint_confidence_threshold:
+            Optional confidence threshold to apply to keypoints.
         det_model_ckpt:
             Optional path to model weights to use.
             If not provided, uses the checkpoint specified in the input config.
@@ -128,7 +130,8 @@ class PosesGenerator(object):
         self,
         det_config_file: str,
         pose_config_file: str,
-        confidence_threshold: float = 0.8,
+        det_confidence_threshold: float = 0.8,
+        keypoint_confidence_threshold: float = 0.0,
         det_model_ckpt: Optional[str] = None,
         det_model_device: str = "cuda:0",
         pose_model_ckpt: Optional[str] = None,
@@ -140,14 +143,16 @@ class PosesGenerator(object):
             DETECTION_CLASSES.index(k) for k in DETECTION_CLASS_KEYPOINTS
         }
 
+        self.det_conf_thresh = det_confidence_threshold
+        self.kp_conf_thresh = keypoint_confidence_threshold
+
         detectron_cfg = setup_detectron_cfg(
             det_config_file,
             config_overrides,
-            confidence_threshold,
+            det_confidence_threshold,
             model_checkpoint_filepath=det_model_ckpt,
             device=det_model_device,
         )
-        self.det_conf_thresh = confidence_threshold
         self.predictor = VisualizationDemo(detectron_cfg)
 
         self.pose_model = init_pose_model(
@@ -308,6 +313,8 @@ class PosesGenerator(object):
                 **kw,
             )
 
+        kp_conf_thresh = self.kp_conf_thresh
+
         for img_id in tqdm(
             out_dset.images(),
             desc="Processing images",
@@ -337,9 +344,12 @@ class PosesGenerator(object):
                     # which case x=y=0), v=1: labeled but not visible, and
                     # v=2: labeled and visible.
                     for kp in kp_mat.tolist():
-                        # TODO: Filter keypoints if present by a threshold?
-                        #       if not above threshold, fill in triple-0.
-                        kp_vals.extend([*kp[:2], 2])
+                        # Filter keypoints if present by a threshold.
+                        # If not above threshold, fill in triple-0.
+                        if kp[2] >= kp_conf_thresh:
+                            kp_vals.extend([*kp[:2], 2])
+                        else:
+                            kp_vals.extend([0, 0, 0])
                     kp_kw["keypoints"] = kp_vals
                     kp_kw["keypoint_scores"] = kp_mat[:, 2].ravel().tolist()
 
@@ -408,11 +418,18 @@ class PosesGenerator(object):
     help="The device on which to run the pose estimator (e.g., 'cpu', 'cuda:0')."
 )
 @click.option(
-    "--conf-thresh", "confidence_threshold",
+    "--det-conf-thresh", "det_confidence_threshold",
     type=float,
     default=0.8,
     show_default=True,
     help="The confidence threshold to use for the bounding-box detector."
+)
+@click.option(
+    "--keypoint-conf-thresh", "keypoint_confidence_threshold",
+    type=float,
+    default=0.0,
+    show_default=True,
+    help="The confidence threshold to use for the keypoints."
 )
 @click.option(
     "--checkpoint-interval", "checkpoint_interval",
@@ -423,7 +440,6 @@ class PosesGenerator(object):
         "output."
     ),
 )
-# TODO: Keypoint confidence threshold.
 def main(
     input_coco_filepath: Path,
     output_coco_filepath: Path,
@@ -433,7 +449,8 @@ def main(
     pose_weights_filepath: Path,
     detector_device: str,
     pose_device: str,
-    confidence_threshold: float,
+    det_confidence_threshold: float,
+    keypoint_confidence_threshold: float,
     checkpoint_interval: Optional[int],
 ):
     """
@@ -486,7 +503,8 @@ def main(
     pg = PosesGenerator(
         det_config_file=detector_config.as_posix(),
         pose_config_file=pose_config.as_posix(),
-        confidence_threshold=confidence_threshold,
+        det_confidence_threshold=det_confidence_threshold,
+        keypoint_confidence_threshold=keypoint_confidence_threshold,
         det_model_ckpt=detector_weights_filepath.as_posix(),
         det_model_device=detector_device,
         pose_model_ckpt=pose_weights_filepath.as_posix(),
