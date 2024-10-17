@@ -455,8 +455,15 @@ def main(
             --pose-config python-tpl/TCN_HPL/tcn_hpl/data/utils/pose_generation/configs/ViTPose_base_medic_casualty_256x192.py \\
             --pose-weights ./model_files/pose_estimation/pose_model.pth
     """
-    input_dset = kwcoco.CocoDataset(input_coco_filepath)
+    # Prevent overwriting an existing file. These are expensive to compute so
+    # we don't want to mess that up.
+    if output_coco_filepath.is_file():
+        raise ValueError(
+            f"Output COCO file already exists, refusing to overwrite: "
+            f"{output_coco_filepath}"
+        )
 
+    input_dset = kwcoco.CocoDataset(input_coco_filepath)
 
     img_done_cb = None
     if checkpoint_interval is not None:
