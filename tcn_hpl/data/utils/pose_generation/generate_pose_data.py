@@ -18,14 +18,11 @@ from detectron2.data.detection_utils import read_image
 import kwcoco
 from mmpose.apis import inference_top_down_pose_model, init_pose_model, vis_pose_result
 from mmpose.datasets import DatasetInfo
-import numpy as np
 import numpy.typing as npt
 import torch
 from tqdm import tqdm
-from pytorch_lightning.callbacks import model_checkpoint
 
 from tcn_hpl.data.utils.pose_generation.predictor import VisualizationDemo
-from tcn_hpl.data.utils.pose_generation.utils import get_parser, load_yaml_as_dict
 
 
 warnings.filterwarnings("ignore")
@@ -341,8 +338,10 @@ class PosesGenerator(object):
                     # v=2: labeled and visible.
                     for kp in kp_mat.tolist():
                         # TODO: Filter keypoints if present by a threshold?
+                        #       if not above threshold, fill in triple-0.
                         kp_vals.extend([*kp[:2], 2])
                     kp_kw["keypoints"] = kp_vals
+                    kp_kw["keypoint_scores"] = kp_mat[:, 2].ravel().tolist()
 
                 out_dset.add_annotation(
                     image_id=img_id,
