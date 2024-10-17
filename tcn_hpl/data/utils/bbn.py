@@ -166,11 +166,22 @@ def convert_truth_to_array(
     "output_coco_filepath",
     type=click.Path(dir_okay=False, resolve_path=True, path_type=Path),
 )
+@click.option(
+    "--relative",
+    is_flag=True,
+    default=False,
+    help=(
+        "Output relative filepaths for videos and images in the COCO JSON "
+        "file instead of relative paths. Relative paths will be rooted at the "
+        "truth root directory and working directory, respecively."
+    ),
+)
 def create_truth_coco(
     bbn_truth_root: Path,
     working_directory: Path,
     activity_label_config: Path,
     output_coco_filepath: Path,
+    relative: bool,
 ) -> None:
     """
     Extract the component frames aof a directory of MP4 videos that have an
@@ -183,21 +194,31 @@ def create_truth_coco(
     We will want to extract all frames from the found video files, however not
     all of them are the same frame-rate or resolution.
 
-    BBN_TRUTH_ROOT
-        Root directory under which MP4 video files and paired
-        *.skill_labels_by_frame.txt files are located.
-    WORKING_DIRECTORY
-        Root directory into which extracted MP4 video are located (should be
-        extracted into).
-    ACTIVITY_LABEL_CONFIG
-        Path to the PTG-Angel system configuration file for activity labels,
-        IDs and expected full-text strings to match against in truth files.
-        E.g. `angel_system/config/activity_labels/medical/m2.yaml`.
-        Parts of this will assume that the notional "background" class is ID 0.
-    OUTPUT_COCO_FILEPATH
-        Path to where the output COCO JSON file should be written to. If this
-        is given with a `.zip` extension, then it will be compressed up into an
-        archive.
+    \b
+    Positional Arguments:
+        BBN_TRUTH_ROOT
+            Root directory under which MP4 video files and paired
+            *.skill_labels_by_frame.txt files are located.
+        WORKING_DIRECTORY
+            Root directory into which extracted MP4 video are located (should be
+            extracted into).
+        ACTIVITY_LABEL_CONFIG
+            Path to the PTG-Angel system configuration file for activity labels,
+            IDs and expected full-text strings to match against in truth files.
+            E.g. `angel_system/config/activity_labels/medical/m2.yaml`.
+            Parts of this will assume that the notional "background" class is ID 0.
+        OUTPUT_COCO_FILEPATH
+            Path to where the output COCO JSON file should be written to. If this
+            is given with a `.zip` extension, then it will be compressed up into an
+            archive.
+
+    \b
+    Example Invocation:
+        $ bbn_create_truth_coco \\
+            ~/data/darpa-ptg/bbn_data/lab_data-golden/m2_tourniquet/positive/3_tourns_122023 \\
+            ~/data/darpa-ptg/bbn_data/lab_data-working/m2_tourniquet/positive/3_tourns_122023 \\
+            ~/dev/darpa-ptg/angel_system/config/activity_labels/medical/m2.yaml \\
+            ~/data/darpa-ptg/bbn_data/lab_data-working/m2_tourniquet/positive/3_tourns_122023-activity_truth.json
     """
     working_directory.mkdir(exist_ok=True)
 
@@ -265,18 +286,23 @@ def create_truth_coco(
         frame_activity_gt = convert_truth_to_array(vi.truth_file, vi.num_frames, map_descr_to_id)
 
         # Video "name" is the relative path to the video file.
+        vid_file = vi.mp4_file
+        if relative:
+            vid_file = vi.mp4_file.relative_to(bbn_truth_root)
         vid = truth_ds.ensure_video(
-            vi.mp4_file.relative_to(bbn_truth_root).as_posix(),
+            vid_file.as_posix(),
             framerate=vi.fps,
         )
         frame_files = sorted(vi.frames_dir.iterdir())
         assert len(frame_activity_gt) == len(frame_files)
-        for i, (gt_id, frame_path) in enumerate(zip(frame_activity_gt, frame_files)):
+        for i, (gt_id, frame_file) in enumerate(zip(frame_activity_gt, frame_files)):
             gt_id: int
-            frame_path: Path
-            assert frame_path.is_file()
+            frame_file: Path
+            assert frame_file.is_file()
+            if relative:
+                frame_file = frame_file.relative_to(working_directory)
             gid = truth_ds.ensure_image(
-                frame_path.relative_to(working_directory).as_posix(),
+                frame_file.as_posix(),
                 video_id=vid,
                 frame_index=i,
                 height=vi.frame_size[0],
