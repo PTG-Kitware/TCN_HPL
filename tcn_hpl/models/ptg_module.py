@@ -105,7 +105,7 @@ class PTGLitModule(LightningModule):
             actions = file_ptr.readlines()
             actions = [a.strip() for a in actions]  # drop leading/trailing whitespace
             for a in actions:
-                parts = a.split(" ")
+                parts = a.split()  # split on any number of whitespace
                 actions_dict[parts[1]] = int(parts[0])
 
         self.class_ids = list(actions_dict.values())
