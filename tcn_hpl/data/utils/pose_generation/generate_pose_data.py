@@ -324,6 +324,11 @@ class PosesGenerator(object):
             img = read_image(img_path, format="BGR")
             boxes, scores, classes, keypoints_list = self.predict_single(img)
 
+            # boxes is output in xyxy (ltrb), but the COCO format wants xywh
+            # format.
+            boxes[:, 2] -= boxes[:, 0]
+            boxes[:, 3] -= boxes[:, 1]
+
             # We will need non-numpy data types to insert into the structure to
             # follow JSON compliance.
             boxes_list = boxes.tolist()
