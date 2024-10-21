@@ -18,57 +18,11 @@ from tcn_hpl.data.vectorize import (
     FrameData,
     FrameObjectDetections,
     FramePoses,
-    vectorize,
+    vectorize_window,
 )
 
 
 logger = logging.getLogger(__name__)
-
-
-def standarize_online_inputs(inputs):
-    pass
-
-
-def standarize_offline_inputs(data):
-    dset = data[0]
-    frames = data[1]
-
-
-def collect_inputs(data, offline=True):
-    """
-    Collects inputs from either an offline or real-time source.
-
-    Args:
-        data: data stream input. For offline, a coco dataset. For online, a set of ROS messages
-
-        offline (bool): If True, fetches data from offline source; otherwise, real-time.
-
-    Returns:
-        inputs: The collected inputs from either a real-time or offline source in standarized format.
-            Designed as a dict of lists. all lists must have the size of the widnow_size:
-                {object_dets: [], pose_estimations:[], left_hand: [], right_hand: []}
-
-    """
-    if offline:
-        inputs = standarize_offline_inputs(data)
-    else:
-        inputs = standarize_online_inputs(data)
-
-    return inputs
-
-
-def define_tcn_vector(inputs):
-    """
-    Define the TCN vector using the collected inputs.
-
-    Args:
-        inputs: The inputs collected from either real-time or offline source.
-
-    Returns:
-        tcn_vector: The defined TCN vector.
-    """
-    tcn_vector = torch.tensor(inputs).float()  # Dummy transformation
-    return tcn_vector
 
 
 class TCNDataset(Dataset):
@@ -117,6 +71,14 @@ class TCNDataset(Dataset):
         self._window_vid: List[int] = []
         # COCO Image IDs per-frame per-window.
         self._window_gids: List[List[int]] = []
+
+        # Mapping of object detection category semantic names to their ID
+        # (index) value. This is not the inverse mapping as object detection
+        # output may not provide all possible model classes, i.e. may subtract
+        # the "background" class, which would mean some index is not being
+        # represented.
+        # This attribute should be set by the `load_*` methods.
+        self._det_label_vec: Sequence[Optional[str]] = []
 
         # Constant 1's mask value to re-use.
         self._ones_mask = np.ones(window_size, dtype=int)
@@ -206,6 +168,12 @@ class TCNDataset(Dataset):
             np.ndarray(shape=(0, num_pose_keypoints)),
         )
 
+        # Save object detection category to index mapping.
+        det_label_vec = [None] * (max(dets_coco.cats) + 1)
+        for c in dets_coco.cats.values():
+            det_label_vec[c["id"]] = c["name"]
+        self._det_label_vec = tuple(det_label_vec)
+
         # Collect per-frame data first per-video, then slice into windows.
         #
         # Windows of per-frame data that would go into producing a vector.
@@ -220,6 +188,7 @@ class TCNDataset(Dataset):
         # cache frequently called module functions
         np_asarray = np.asarray
         for vid_id in tqdm(activity_coco.videos()):
+            vid_id: int
             vid_img_ids = list(activity_coco.images(video_id=vid_id))
             # Iterate over sub-videos if applicable
             vid_fr_multiple = vid_id_to_fr_multiple[vid_id]
@@ -230,6 +199,7 @@ class TCNDataset(Dataset):
                 vid_frame_data = []
                 vid_gid = vid_img_ids[starting_idx::vid_fr_multiple]
                 for img_id in tqdm(vid_gid):
+                    img_id: int
                     img_act = activity_coco.annots(image_id=img_id)
                     img_dets = dets_coco.annots(image_id=img_id)
                     img_poses = pose_coco.annots(image_id=img_id)
@@ -262,6 +232,12 @@ class TCNDataset(Dataset):
                     )
                     if img_poses:
                         # Only keep the positions, drop visibility value.
+                        # This will have a shape error if there are different
+                        # pose classes with differing quantities of keypoints.
+                        # !!!
+                        # BASICALLY ASSUMING THERE IS ONLY ONE POSE CLASS WITH
+                        # KEYPOINTS.
+                        # !!!
                         kp_pos = np_asarray(img_poses.lookup("keypoints")).reshape(
                             -1, num_pose_keypoints, 3
                         )[:, :, :2]
@@ -282,15 +258,17 @@ class TCNDataset(Dataset):
                 # effectively be skipped.
                 vid_window_truth = []
                 vid_window_data = []
+                vid_window_vid = []  # just a single ID per window referencing video
                 vid_window_gids = []  # Image IDs for frames of this window
                 for i in range(len(vid_frame_data) - self.window_size):
                     vid_window_truth.append(vid_frame_truth[i : i + self.window_size])
                     vid_window_data.append(vid_frame_data[i : i + self.window_size])
+                    vid_window_vid.append(vid_id)
                     vid_window_gids.append(vid_gid[i : i + self.window_size])
 
                 window_truth.extend(vid_window_truth)
                 window_data.extend(vid_window_data)
-                window_vid.append(vid_id)
+                window_vid.extend(vid_window_vid)
                 window_gids.extend(vid_window_gids)
 
         self._window_data = window_data
@@ -302,8 +280,8 @@ class TCNDataset(Dataset):
 
     def load_data_online(
         self,
-        window_detections: Sequence[FrameObjectDetections],
-        window_poses: Sequence[FramePoses],
+        window_data: Sequence[FrameData],
+        det_class_label_vec: Sequence[Optional[str]],
     ) -> None:
         """
         Receive data from a streaming runtime to yield from __getitem__.
@@ -312,29 +290,25 @@ class TCNDataset(Dataset):
         `None` should be filled in the corresponding position(s).
 
         Args:
-            window_detections: TODO
-            window_poses: TODO
+            window_data: Per-frame data to compose the solitary window.
+            det_class_label_vec:
+                Sequence of string labels mapping predicted object detection
+                class label integers into strings. This is generally all
+                categories that the detector may predict, in index order, sans
+                the "background" class.
         """
         # Just load one windows worth of stuff so only __getitem__(0) makes
         # sense.
-        if len(window_detections) != len(window_poses):
-            raise ValueError(
-                f"Input detections and poses sequences were of incongruent "
-                f"length ({len(window_detections)} != {len(window_poses)})."
-            )
-        if len(window_detections) != self.window_size:
+        if len(window_data) != self.window_size:
             raise ValueError(
                 f"Input sequences did not match the configured window size "
-                f"({len(window_detections)} != {self.window_size})."
+                f"({len(window_data)} != {self.window_size})."
             )
 
-        # Take in a vector of FrameObjectDetections and FramePoses directly.
-        # TODO: Check that the quantity input is each window_size in length.
-        # Form a single window, set to the
-        window_data = []
-        for fd, fp in zip(window_detections, window_poses):
-            window_data.append(FrameData(fd, fp))
-        self._window_data = [window_data]
+        self._det_label_vec = tuple(det_class_label_vec)
+
+        # Assign a single window of frame data.
+        self._window_data = [list(window_data)]
         # The following are undefined for online mode, so we're just filling in
         # 0's enough to match size/shape requirements.
         self._window_truth = [[0] * self.window_size]
@@ -370,10 +344,13 @@ class TCNDataset(Dataset):
         window_vid = self._window_vid[index]
         window_gids = self._window_gids[index]
 
-        # Under the current operation of this dataset, the mask should always
-        # consist of 1's. This may be removed in the future.
-
-        tcn_vector = vectorize(inputs)
+        tcn_vector = vectorize_window(
+            frame_data=window_data,
+            # The following arguments may be specific to the "classic" version
+            # feature construction.
+            det_class_labels=self._det_label_vec,
+            feat_version=self.feature_version,
+        )
         if self.transform is not None:
             tcn_vector = self.transform(tcn_vector)
 
@@ -394,7 +371,7 @@ class TCNDataset(Dataset):
         Returns:
             length: Length of the dataset.
         """
-        return len(self.frames)
+        return len(self._window_data)
 
 
 if __name__ == "__main__":
@@ -402,16 +379,16 @@ if __name__ == "__main__":
 
     # Example usage:
     activity_coco = kwcoco.CocoDataset(
-        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/TEST-activity_truth.coco.json"
-        "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/activity_truth.coco.json"
+        "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/TEST-activity_truth.coco.json"
+        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/activity_truth.coco.json"
     )
     dets_coco = kwcoco.CocoDataset(
-        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/TEST-object_detections.coco.json"
-        "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/all_object_detections.coco.json"
+        "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/TEST-object_detections.coco.json"
+        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/all_object_detections.coco.json"
     )
     pose_coco = kwcoco.CocoDataset(
-        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/TEST-pose_estimates.coco.json"
-        "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/all_poses.coco.json"
+        "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/TEST-pose_estimates.coco.json"
+        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/all_poses.coco.json"
     )
 
     dataset = TCNDataset(window_size=25, feature_version=6)
@@ -422,7 +399,6 @@ if __name__ == "__main__":
         target_framerate=15,
     )
 
-    breakpoint()
     print(f"dataset: {len(dataset)}")
     data_loader = torch.utils.data.DataLoader(dataset, batch_size=4, shuffle=True)
 
