@@ -1,10 +1,7 @@
 import random
 import torch
 
-import numpy as np
-
-
-from angel_system.activity_classification.utils import feature_version_to_options
+from tcn_hpl.data.vectorize_classic import feature_version_to_options
 
 
 def clamp(n, smallest, largest):
