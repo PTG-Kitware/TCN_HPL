@@ -109,6 +109,7 @@ def vectorize_window(
     frame_data: tg.Sequence[FrameData],
     det_class_labels: tg.Sequence[tg.Optional[str]],
     feat_version: int = 6,
+    top_k_objects: int = 1,
 ) -> npt.NDArray[float]:
     """
     Construct an embedding vector for some window of data to be used for
@@ -128,6 +129,9 @@ def vectorize_window(
         feat_version:
             Integer version number of the feature to compute.
             (historical concept)
+        top_k_objects:
+            Use this many most confident instances of every object type in the
+            feature vector.
 
     Returns:
         Embedding vector matrix for the input window of data.
@@ -181,6 +185,7 @@ def vectorize_window(
             pose_keypoints=pose_kps,
             obj_label_to_ind=obj_label_to_ind,
             version=feat_version,
+            top_k_objects=top_k_objects,
         ).ravel().astype(feat_dtype)
         feat_dim = frame_feat.size
         f_vecs[i] = frame_feat
