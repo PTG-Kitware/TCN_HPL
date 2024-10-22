@@ -74,9 +74,9 @@ class TCNDataset(Dataset):
         # mode, the value is undefined.
         # Shape: (n_windows,)
         self._window_vid: Optional[npt.NDArray[int]] = None
-        # COCO Image IDs per-frame per-window.
+        # Video frame indices per-frame per-window.
         # Shape: (n_windows, window_size)
-        self._window_gids: Optional[npt.NDArray[int]] = None
+        self._window_frames: Optional[npt.NDArray[int]] = None
         # Optionally calculated weight to apply to a window. This is to support
         # weighted random sampling during training. This should only be
         # available when there is truth avaialble, i.e. during offline mode.
@@ -205,14 +205,16 @@ class TCNDataset(Dataset):
         window_vid: List[int] = []
 
         # Image ID per-frame per-window.
-        window_gids: List[List[int]] = []
+        window_frames: List[List[int]] = []
 
         # cache frequently called module functions
         np_asarray = np.asarray
 
         for vid_id in tqdm(activity_coco.videos()):
             vid_id: int
-            vid_img_ids = list(activity_coco.images(video_id=vid_id))
+            vid_images = activity_coco.images(video_id=vid_id)
+            vid_img_ids: List[int] = list(vid_images)
+            vid_frames_all: List[int] = vid_images.lookup("frame_index")  # noqa
             # Iterate over sub-videos if applicable
             vid_fr_multiple = vid_id_to_fr_multiple[vid_id]
             for starting_idx in range(vid_fr_multiple):  # may just be a single [0]
@@ -221,6 +223,7 @@ class TCNDataset(Dataset):
                 vid_frame_truth = []
                 vid_frame_data = []
                 vid_gid = vid_img_ids[starting_idx::vid_fr_multiple]
+                vid_frames = vid_frames_all[starting_idx::vid_fr_multiple]
                 for img_id in tqdm(vid_gid):
                     img_id: int
                     img_act = activity_coco.annots(image_id=img_id)
@@ -282,22 +285,22 @@ class TCNDataset(Dataset):
                 vid_window_truth = []
                 vid_window_data = []
                 vid_window_vid = []  # just a single ID per window referencing video
-                vid_window_gids = []  # Image IDs for frames of this window
+                vid_window_frames = []  # Video frame numbers for frames of this window
                 for i in range(len(vid_frame_data) - self.window_size):
                     vid_window_truth.append(vid_frame_truth[i : i + self.window_size])
                     vid_window_data.append(vid_frame_data[i : i + self.window_size])
                     vid_window_vid.append(vid_id)
-                    vid_window_gids.append(vid_gid[i : i + self.window_size])
+                    vid_window_frames.append(vid_frames[i : i + self.window_size])
 
                 window_truth.extend(vid_window_truth)
                 window_data.extend(vid_window_data)
                 window_vid.extend(vid_window_vid)
-                window_gids.extend(vid_window_gids)
+                window_frames.extend(vid_window_frames)
 
         self._window_data = window_data
         self._window_truth = np.asarray(window_truth)
         self._window_vid = np.asarray(window_vid)
-        self._window_gids = np.asarray(window_gids)
+        self._window_frames = np.asarray(window_frames)
 
         # Collect for weighting the truth labels for the final frames of
         # windows, which is the truth value for the window as a whole.
@@ -344,7 +347,7 @@ class TCNDataset(Dataset):
         # 0's enough to match size/shape requirements.
         self._window_truth = np.zeros(shape=(1, self.window_size), dtype=int)
         self._window_vid = np.asarray([0])
-        self._window_gids = np.asarray([list(range(self.window_size))])
+        self._window_frames = np.asarray([list(range(self.window_size))])
 
     def __getitem__(
         self, index: int
@@ -373,7 +376,7 @@ class TCNDataset(Dataset):
         window_data = self._window_data[index]
         window_truth = self._window_truth[index]
         window_vid = self._window_vid[index]
-        window_gids = self._window_gids[index]
+        window_frames = self._window_frames[index]
 
         tcn_vector = vectorize_window(
             frame_data=window_data,
@@ -392,7 +395,7 @@ class TCNDataset(Dataset):
             # consist of 1's. This may be removed in the future.
             self._ones_mask,
             np.repeat(window_vid, self.window_size),
-            window_gids,
+            window_frames,
         )
 
     def __len__(self):
