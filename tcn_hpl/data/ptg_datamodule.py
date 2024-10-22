@@ -1,13 +1,14 @@
+import kwcoco
 import torch
 import torchvision
 
 # from lightning import LightningDataModule
 from pytorch_lightning import LightningDataModule
-
 from torch.utils.data import DataLoader, Dataset
 from torchvision.transforms import transforms
 from typing import Any, Dict, Optional, Tuple
 
+from .tcn_dataset import TCNDataset
 from .components.PTG_dataset import PTG_Dataset
 from .components.augmentations import MoveCenterPts, NormalizePixelPts
 
@@ -59,21 +60,46 @@ class PTGDataModule(LightningDataModule):
 
     def __init__(
         self,
-        data_dir: str,
+        coco_train_activities: str,
+        coco_train_objects: str,
+        coco_train_poses: str,
+        coco_validation_activities: str,
+        coco_validation_objects: str,
+        coco_validation_poses: str,
+        coco_test_activities: str,
+        coco_test_objects: str,
+        coco_test_poses: str,
         batch_size: int,
         num_workers: int,
-        num_classes: int,
-        sample_rate: int,
         window_size: int,
-        split: int,
+        target_framerate: float,
+        feature_version: int,
         epoch_length: int,
         pin_memory: bool,
         all_transforms: Any,
+        # accept arbitrary other stuff for configuration convenience.
+        **kwargs,
     ) -> None:
         """Initialize a `PTGDataModule`.
 
-        :param data_dir: The data directory. Defaults to `"data/"`.
-        :param train_val_test_split: The train, validation and test split. Defaults to `(55_000, 5_000, 10_000)`.
+        :param coco_train_activities: Path to the COCO file with train-split
+            activity classification ground truth.
+        :param coco_train_objects: Path to the COCO file with train-split
+            object detections to use for training.
+        :param coco_train_poses: Path to the COCO file with train-split pose
+            estimations to use for training.
+        :param coco_validation_activities: Path to the COCO file with
+            validation-split activity classification ground truth.
+        :param coco_validation_objects: Path to the COCO file with
+            validation-split object detections to use for training.
+        :param coco_validation_poses: Path to the COCO file with train-split
+            pose estimations to use for training.
+        :param coco_test_activities: Path to the COCO file with test-split
+            activity classification ground truth.
+        :param coco_test_objects: Path to the COCO file with test-split
+            object detections to use for training.
+        :param coco_test_poses: Path to the COCO file with test-split
+            pose estimations to use for training.
         :param batch_size: The batch size. Defaults to `64`.
         :param num_workers: The number of workers. Defaults to `0`.
         :param pin_memory: Whether to pin memory. Defaults to `False`.
@@ -95,9 +121,9 @@ class PTGDataModule(LightningDataModule):
             transforms_list.append(all_transforms[transform_name])
         self.val_transform = transforms.Compose(transforms_list)
 
-        self.data_train: Optional[Dataset] = None
-        self.data_val: Optional[Dataset] = None
-        self.data_test: Optional[Dataset] = None
+        self.data_train: Optional[TCNDataset] = None
+        self.data_val: Optional[TCNDataset] = None
+        self.data_test: Optional[TCNDataset] = None
 
     @property
     def num_classes(self) -> int:
@@ -129,81 +155,40 @@ class PTGDataModule(LightningDataModule):
         """
         # load and split datasets only if not loaded already
         if not self.data_train and not self.data_val and not self.data_test:
-            exp_data = self.hparams.data_dir
-
-            vid_list_file = f"{exp_data}/splits/train.split{self.hparams.split}.bundle"
-            vid_list_file_val = (
-                f"{exp_data}/splits/val.split{self.hparams.split}.bundle"
-            )
-            vid_list_file_tst = (
-                f"{exp_data}/splits/test.split{self.hparams.split}.bundle"
-            )
-
-            features_path = f"{exp_data}/features/"
-            gt_path = f"{exp_data}/groundTruth/"
-            mapping_file = f"{exp_data}/mapping.txt"
-
-            #####################
-            # Get Action Names
-            #####################
-            file_ptr = open(mapping_file, "r")
-            actions = file_ptr.read().split("\n")[:-1]
-            file_ptr.close()
-            actions_dict = dict()
-            for a in actions:
-                actions_dict[a.split()[1]] = int(a.split()[0])
-
-            #####################
-            # Get Video Names
-            #####################
-            # Load training vidoes
-            with open(vid_list_file, "r") as train_f:
-                train_videos = train_f.read().split("\n")[:-1]
-
-            # print(f"train_vids: {train_videos}")
-            # exit()
-            # Load validation vidoes
-            with open(vid_list_file_val, "r") as val_f:
-                val_videos = val_f.read().split("\n")[:-1]
-
-            # Load test videos
-            with open(vid_list_file_tst, "r") as test_f:
-                test_videos = test_f.read().split("\n")[:-1]
-
-            self.data_train = PTG_Dataset(
-                train_videos,
-                self.hparams.num_classes,
-                actions_dict,
-                gt_path,
-                features_path,
-                self.hparams.sample_rate,
+            self.data_train = TCNDataset(
                 self.hparams.window_size,
-                transform=self.train_transform,
+                self.hparams.feature_version,
+                self.train_transform,
+            )
+            self.data_train.load_data_offline(
+                kwcoco.CocoDataset(self.hparams.coco_train_activities),
+                kwcoco.CocoDataset(self.hparams.coco_train_objects),
+                kwcoco.CocoDataset(self.hparams.coco_train_poses),
+                self.hparams.target_framerate,
             )
 
-            # print(f"size:{self.data_train.__len__()}")
-            # exit()
-
-            self.data_val = PTG_Dataset(
-                val_videos,
-                self.hparams.num_classes,
-                actions_dict,
-                gt_path,
-                features_path,
-                self.hparams.sample_rate,
+            self.data_val = TCNDataset(
                 self.hparams.window_size,
-                transform=self.val_transform,
+                self.hparams.feature_version,
+                self.val_transform,
+            )
+            self.data_val.load_data_offline(
+                kwcoco.CocoDataset(self.hparams.coco_validation_activities),
+                kwcoco.CocoDataset(self.hparams.coco_validation_objects),
+                kwcoco.CocoDataset(self.hparams.coco_validation_poses),
+                self.hparams.target_framerate,
             )
 
-            self.data_test = PTG_Dataset(
-                test_videos,
-                self.hparams.num_classes,
-                actions_dict,
-                gt_path,
-                features_path,
-                self.hparams.sample_rate,
+            self.data_test = TCNDataset(
                 self.hparams.window_size,
-                transform=self.val_transform,
+                self.hparams.feature_version,
+                self.val_transform,
+            )
+            self.data_test.load_data_offline(
+                kwcoco.CocoDataset(self.hparams.coco_test_activities),
+                kwcoco.CocoDataset(self.hparams.coco_test_objects),
+                kwcoco.CocoDataset(self.hparams.coco_test_poses),
+                self.hparams.target_framerate,
             )
 
     def train_dataloader(self) -> DataLoader[Any]:
@@ -212,7 +197,7 @@ class PTGDataModule(LightningDataModule):
         :return: The train dataloader.
         """
         train_sampler = torch.utils.data.WeightedRandomSampler(
-            self.data_train.weights,
+            self.data_train.window_weights,
             self.hparams.epoch_length,
             replacement=True,
             generator=None,
@@ -251,31 +236,3 @@ class PTGDataModule(LightningDataModule):
             pin_memory=self.hparams.pin_memory,
             shuffle=False,
         )
-
-    def teardown(self, stage: Optional[str] = None) -> None:
-        """Lightning hook for cleaning up after `trainer.fit()`, `trainer.validate()`,
-        `trainer.test()`, and `trainer.predict()`.
-
-        :param stage: The stage being torn down. Either `"fit"`, `"validate"`, `"test"`, or `"predict"`.
-            Defaults to ``None``.
-        """
-        pass
-
-    def state_dict(self) -> Dict[Any, Any]:
-        """Called when saving a checkpoint. Implement to generate and save the datamodule state.
-
-        :return: A dictionary containing the datamodule state that you want to save.
-        """
-        return {}
-
-    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
-        """Called when loading a checkpoint. Implement to reload datamodule state given datamodule
-        `state_dict()`.
-
-        :param state_dict: The datamodule state returned by `self.state_dict()`.
-        """
-        pass
-
-
-if __name__ == "__main__":
-    _ = PTGDataModule()
