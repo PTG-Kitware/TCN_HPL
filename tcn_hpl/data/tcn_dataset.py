@@ -1,4 +1,5 @@
 import logging
+import time
 from typing import Callable
 from typing import Dict
 from typing import List
@@ -61,16 +62,25 @@ class TCNDataset(Dataset):
 
         # For offline mode, pre-cut videos into clips according to window
         # size for easy batching.
-        # For online more, expect only one window to be set at a time via the
+        # For online mode, expect only one window to be set at a time via the
         # `load_data_online` method.
         # Content to be indexed into during __getitem__.
+        # This cannot be stored as a ndarray due to its variable nature.
         self._window_data: List[List[FrameData]] = []
-        self._window_truth: List[List[int]] = []
+        # The truth labels per-frame per-window.
+        # Shape: (n_windows, window_size)
+        self._window_truth: Optional[npt.NDArray[int]] = None
         # Per-window, which source video ID it is associated with. For online
         # mode, the value is undefined.
-        self._window_vid: List[int] = []
+        # Shape: (n_windows,)
+        self._window_vid: Optional[npt.NDArray[int]] = None
         # COCO Image IDs per-frame per-window.
-        self._window_gids: List[List[int]] = []
+        # Shape: (n_windows, window_size)
+        self._window_gids: Optional[npt.NDArray[int]] = None
+        # Optionally calculated weight to apply to a window. This is to support
+        # weighted random sampling during training. This should only be
+        # available when there is truth avaialble, i.e. during offline mode.
+        self._window_weights: Optional[npt.NDArray[float]] = None
 
         # Mapping of object detection category semantic names to their ID
         # (index) value. This is not the inverse mapping as object detection
@@ -80,8 +90,14 @@ class TCNDataset(Dataset):
         # This attribute should be set by the `load_*` methods.
         self._det_label_vec: Sequence[Optional[str]] = []
 
-        # Constant 1's mask value to re-use.
-        self._ones_mask = np.ones(window_size, dtype=int)
+        # Constant 1's mask value to re-use during get-item.
+        self._ones_mask: npt.NDArray[int] = np.ones(window_size, dtype=int)
+
+    @property
+    def window_weights(self) -> npt.NDArray[float]:
+        if self._window_weights is None:
+            raise RuntimeError("No class weights calculated for this dataset.")
+        return self._window_weights
 
     def load_data_offline(
         self,
@@ -174,19 +190,26 @@ class TCNDataset(Dataset):
             det_label_vec[c["id"]] = c["name"]
         self._det_label_vec = tuple(det_label_vec)
 
+        #
         # Collect per-frame data first per-video, then slice into windows.
         #
+
         # Windows of per-frame data that would go into producing a vector.
         window_data: List[List[FrameData]] = []
+
         # Activity classification truth labels per-frame per-window.
         window_truth: List[List[int]] = []
+
         # Video ID represented per window. Only one video should be represented
         # in any one window.
         window_vid: List[int] = []
+
         # Image ID per-frame per-window.
         window_gids: List[List[int]] = []
+
         # cache frequently called module functions
         np_asarray = np.asarray
+
         for vid_id in tqdm(activity_coco.videos()):
             vid_id: int
             vid_img_ids = list(activity_coco.images(video_id=vid_id))
@@ -272,11 +295,19 @@ class TCNDataset(Dataset):
                 window_gids.extend(vid_window_gids)
 
         self._window_data = window_data
-        logger.info("Converting window content into arrays...")
-        self._window_truth = window_truth
-        self._window_vid = window_vid
-        self._window_gids = window_gids
-        logger.info("Converting window content into arrays... Done")
+        self._window_truth = np.asarray(window_truth)
+        self._window_vid = np.asarray(window_vid)
+        self._window_gids = np.asarray(window_gids)
+
+        # Collect for weighting the truth labels for the final frames of
+        # windows, which is the truth value for the window as a whole.
+        window_final_class_ids = self._window_truth[:, -1]
+        cls_ids, cls_counts = np.unique(
+            window_final_class_ids,
+            return_counts=True
+        )
+        cls_weights = 1. / cls_counts
+        self._window_weights = cls_weights[window_final_class_ids]
 
     def load_data_online(
         self,
@@ -311,9 +342,9 @@ class TCNDataset(Dataset):
         self._window_data = [list(window_data)]
         # The following are undefined for online mode, so we're just filling in
         # 0's enough to match size/shape requirements.
-        self._window_truth = [[0] * self.window_size]
-        self._window_vid = [0]
-        self._window_gids = [list(range(self.window_size))]
+        self._window_truth = np.zeros(shape=(1, self.window_size), dtype=int)
+        self._window_vid = np.asarray([0])
+        self._window_gids = np.asarray([list(range(self.window_size))])
 
     def __getitem__(
         self, index: int
@@ -356,12 +387,12 @@ class TCNDataset(Dataset):
 
         return (
             tcn_vector,
-            np.asarray(window_truth, dtype=int),
+            window_truth,
             # Under the current operation of this dataset, the mask should always
             # consist of 1's. This may be removed in the future.
             self._ones_mask,
             np.repeat(window_vid, self.window_size),
-            np.asarray(window_gids, dtype=int),
+            window_gids,
         )
 
     def __len__(self):
@@ -379,16 +410,16 @@ if __name__ == "__main__":
 
     # Example usage:
     activity_coco = kwcoco.CocoDataset(
-        "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/TEST-activity_truth.coco.json"
-        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/activity_truth.coco.json"
+        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/TEST-activity_truth.coco.json"
+        "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/activity_truth.coco.json"
     )
     dets_coco = kwcoco.CocoDataset(
-        "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/TEST-object_detections.coco.json"
-        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/all_object_detections.coco.json"
+        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/TEST-object_detections.coco.json"
+        "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/all_object_detections.coco.json"
     )
     pose_coco = kwcoco.CocoDataset(
-        "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/TEST-pose_estimates.coco.json"
-        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/all_poses.coco.json"
+        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/TEST-pose_estimates.coco.json"
+        "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/all_poses.coco.json"
     )
 
     dataset = TCNDataset(window_size=25, feature_version=6)
@@ -400,9 +431,23 @@ if __name__ == "__main__":
     )
 
     print(f"dataset: {len(dataset)}")
-    data_loader = torch.utils.data.DataLoader(dataset, batch_size=4, shuffle=True)
+    batch_size=512  # 16
+    data_loader = torch.utils.data.DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=16,
+        pin_memory=True,
+    )
 
-    for index, batch in enumerate(data_loader):
-        print(batch)  # This will print the TCN vectors for the batch
-        if index > 15:
-            exit()
+    count = 0
+    s = time.time()
+    for index, batch in tqdm(
+        enumerate(data_loader),
+        desc="Iterating batches of features",
+        unit="batches",
+    ):
+        count += 1
+    duration = time.time() - s
+
+    print(f"Total batches of size {batch_size}: {count} ({duration:.02f} seconds total)")
