@@ -85,7 +85,6 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     if cfg.get("train"):
         log.info("Starting training!")
         trainer.fit(model=model, datamodule=datamodule, ckpt_path=cfg.get("ckpt_path"))
-        # trainer.fit(model=model, datamodule=datamodule)
 
     train_metrics = trainer.callback_metrics
 
@@ -95,7 +94,6 @@ def train(cfg: DictConfig) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         if ckpt_path == "":
             log.warning("Best ckpt not found! Using current weights for testing...")
             ckpt_path = None
-        # trainer.test(model=model, datamodule=datamodule, ckpt_path=ckpt_path)
         trainer.test(model=model, datamodule=datamodule, ckpt_path="best")
 
         log.info(f"Best ckpt path: {ckpt_path}")
