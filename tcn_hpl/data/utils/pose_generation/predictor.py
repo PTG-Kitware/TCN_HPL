@@ -34,11 +34,15 @@ class VisualizationDemo(object):
         else:
             self.predictor = DefaultPredictor(cfg)
 
-    def run_on_image(self, image):
+    def run_on_image(self, image, visualize: bool = True):
         """
         Args:
             image (np.ndarray): an image of shape (H, W, C) (in BGR order).
                 This is the format used by OpenCV.
+            visualize:
+                If we should run the visualizer to provide vis_output (second
+                return argument). If this is False, the vis_output will be
+                None.
 
         Returns:
             predictions (dict): the output of the model.
@@ -49,20 +53,21 @@ class VisualizationDemo(object):
         # print(f"predictor: {predictions.keys()}")
         # Convert image from OpenCV BGR format to Matplotlib RGB format.
         image = image[:, :, ::-1]
-        visualizer = Visualizer(image, self.metadata, instance_mode=self.instance_mode)
-        if "panoptic_seg" in predictions:
-            panoptic_seg, segments_info = predictions["panoptic_seg"]
-            vis_output = visualizer.draw_panoptic_seg_predictions(
-                panoptic_seg.to(self.cpu_device), segments_info
-            )
-        else:
-            if "sem_seg" in predictions:
-                vis_output = visualizer.draw_sem_seg(
-                    predictions["sem_seg"].argmax(dim=0).to(self.cpu_device)
+        if visualize:
+            visualizer = Visualizer(image, self.metadata, instance_mode=self.instance_mode)
+            if "panoptic_seg" in predictions:
+                panoptic_seg, segments_info = predictions["panoptic_seg"]
+                vis_output = visualizer.draw_panoptic_seg_predictions(
+                    panoptic_seg.to(self.cpu_device), segments_info
                 )
-            if "instances" in predictions:
-                instances = predictions["instances"].to(self.cpu_device)
-                vis_output = visualizer.draw_instance_predictions(predictions=instances)
+            else:
+                if "sem_seg" in predictions:
+                    vis_output = visualizer.draw_sem_seg(
+                        predictions["sem_seg"].argmax(dim=0).to(self.cpu_device)
+                    )
+                if "instances" in predictions:
+                    instances = predictions["instances"].to(self.cpu_device)
+                    vis_output = visualizer.draw_instance_predictions(predictions=instances)
 
         return predictions, vis_output
 
