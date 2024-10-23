@@ -280,7 +280,7 @@ class TCNDataset(Dataset):
                 vid_frame_data = []
                 vid_gid = vid_img_ids[starting_idx::vid_fr_multiple]
                 vid_frames = vid_frames_all[starting_idx::vid_fr_multiple]
-                for img_id in tqdm(vid_gid):
+                for img_id in vid_gid:
                     img_id: int
                     img_act = activity_coco.annots(image_id=img_id)
                     img_dets = dets_coco.annots(image_id=img_id)
@@ -405,9 +405,10 @@ class TCNDataset(Dataset):
 
         if pre_vectorize:
             if has_vector_cache:
-                # TODO: Load cache
+                logger.info("Loading window vectors from cache...")
                 with np.load(cache_filepath) as data:
                     self._window_vectors = data["window_vectors"]
+                logger.info("Loading window vectors from cache... Done")
             else:
                 # Pre-vectorize data for iteration efficiency during training.
                 window_vectors: List[npt.NDArray[float]] = []
@@ -426,11 +427,13 @@ class TCNDataset(Dataset):
                     window_vectors.append(one_vector)
                 self._window_vectors = window_vectors
                 if cache_filepath is not None:
+                    logger.info("Saving window vectors to cache...")
                     cache_filepath.parent.mkdir(parents=True, exist_ok=True)
                     np.savez_compressed(
                         cache_filepath,
                         window_vectors=window_vectors,
                     )
+                    logger.info("Saving window vectors to cache... Done")
 
     def load_data_online(
         self,

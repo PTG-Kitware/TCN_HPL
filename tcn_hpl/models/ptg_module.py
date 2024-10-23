@@ -56,10 +56,6 @@ class PTGLitModule(LightningModule):
         use_smoothing_loss: bool,
         num_classes: int,
         compile: bool,
-        # topic: str,  # medical or cooking
-        # data_dir: str,
-        # mapping_file_name: str = "mapping.txt",
-        # output_dir: str = None,
     ) -> None:
         """Initialize a `PTGLitModule`.
 
