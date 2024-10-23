@@ -204,11 +204,15 @@ class PTGLitModule(LightningModule):
         return loss
 
     def model_step(
-        self, batch: Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+        self,
+        batch: Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+        compute_loss: bool = True,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Perform a single model step on a batch of data.
 
         :param batch: A batch of data (a tuple) containing the input tensor of features, target labels, and mask.
+        :param compute_loss: Flag to enable or not the computation of the loss
+            value. If this is False, the value of the loss term is undefined.
 
         :return: A tuple containing (in order):
             - A tensor of losses.
@@ -227,10 +231,10 @@ class PTGLitModule(LightningModule):
         logits = self.forward(
             x, m
         )  # shape (4, batch size, num_classes, window))
-        # print(f"logits: {logits.shape}")
         loss = torch.zeros((1)).to(x)
-        for p in logits:
-            loss += self.compute_loss(p, y, m)
+        if compute_loss:
+            for p in logits:
+                loss += self.compute_loss(p, y, m)
 
         probs = torch.softmax(
             logits[-1, :, :, -1], dim=1
