@@ -1,4 +1,6 @@
 import logging
+from hashlib import sha256
+from pathlib import Path
 import time
 from typing import Callable
 from typing import Dict
@@ -7,6 +9,7 @@ from typing import Optional
 from typing import Sequence
 from typing import Set
 from typing import Tuple
+from typing import Union
 
 import kwcoco
 import numpy as np
@@ -39,6 +42,11 @@ class TCNDataset(Dataset):
     During "online" mode, which means data is populated into this dataset via
     the `load_data_online()` method, the truth, source video ID and source
     frame ID returns from get-item are undefined.
+
+    When loading data in "offline" mode, i.e. given COCO datasets, we will
+    pre-compute window vectors to save time during training. We will attempt to
+    cache these vectors if a cache directory is provided to the
+    `load_data_offline` method.
 
     Arguments:
         window_size:
@@ -81,6 +89,8 @@ class TCNDataset(Dataset):
         # weighted random sampling during training. This should only be
         # available when there is truth avaialble, i.e. during offline mode.
         self._window_weights: Optional[npt.NDArray[float]] = None
+        # Optionally defined set of pre-computed window vectors.
+        self._window_vectors: Optional[npt.NDArray[float]] = None
 
         # Mapping of object detection category semantic names to their ID
         # (index) value. This is not the inverse mapping as object detection
@@ -99,6 +109,23 @@ class TCNDataset(Dataset):
             raise RuntimeError("No class weights calculated for this dataset.")
         return self._window_weights
 
+    def _vectorize_window(self, window_data: Sequence[FrameData]):
+        """
+        Vectorize a single window of data.
+        :param window_data: Window of data to vectorize. Must be window-size
+            in length.
+        :return: Transformed vector.
+        """
+        assert len(window_data) == self.window_size
+        tcn_vector = vectorize_window(
+            frame_data=window_data,
+            # The following arguments may be specific to the "classic" version
+            # feature construction.
+            det_class_labels=self._det_label_vec,
+            feat_version=self.feature_version,
+        )
+        return tcn_vector
+
     def load_data_offline(
         self,
         activity_coco: kwcoco.CocoDataset,
@@ -106,9 +133,38 @@ class TCNDataset(Dataset):
         pose_coco: kwcoco.CocoDataset,
         target_framerate: float,  # probably 15
         framerate_round_decimals: int = 1,
+        pre_vectorize: bool = True,
+        cache_dir: Optional[Union[str, Path]] = None,
     ) -> None:
         """
         Load data from filesystem resources for use during training.
+
+        We will pre-compute window vectors to save time during training. We
+        will attempt to cache these vectors if a cache directory is provided.
+
+        Arguments:
+            activity_coco:
+                COCO dataset of per-frame activity classification ground truth.
+                This dataset also serves as the authority for data processing
+                alignment with co-input object detections and pose estimations.
+            dets_coco:
+                COCO Dataset of object detections inferenced on the video
+                frames for which we have activity truth.
+            pose_coco:
+                COCO Dataset of pose data inferenced on the video frames for
+                which we have activity truth.
+            target_framerate:
+                Target frame-rate to assert and normalize videos inputs to
+                allow for the yielding of temporally consistent windows of
+                data.
+            framerate_round_decimals:
+                Number of floating-point decimals to round to when considering
+                frame-rates.
+            pre_vectorize:
+                If we should pre-compute window vectors, possibly caching the
+                results, as part of this load.
+            cache_dir:
+                Optional directory for cache file storage and retrieval.
         """
         # The data coverage for all the input datasets must be congruent.
         logger.info("Checking dataset video/image congruency")
@@ -215,7 +271,7 @@ class TCNDataset(Dataset):
             vid_images = activity_coco.images(video_id=vid_id)
             vid_img_ids: List[int] = list(vid_images)
             vid_frames_all: List[int] = vid_images.lookup("frame_index")  # noqa
-            # Iterate over sub-videos if applicable
+            # Iterate over sub-videos if applicable. See comment earlier in func.
             vid_fr_multiple = vid_id_to_fr_multiple[vid_id]
             for starting_idx in range(vid_fr_multiple):  # may just be a single [0]
                 # video-local storage to keep things separate, will extend main
@@ -305,12 +361,76 @@ class TCNDataset(Dataset):
         # Collect for weighting the truth labels for the final frames of
         # windows, which is the truth value for the window as a whole.
         window_final_class_ids = self._window_truth[:, -1]
-        cls_ids, cls_counts = np.unique(
-            window_final_class_ids,
-            return_counts=True
-        )
-        cls_weights = 1. / cls_counts
+        cls_ids, cls_counts = np.unique(window_final_class_ids, return_counts=True)
+        cls_weights = 1.0 / cls_counts
         self._window_weights = cls_weights[window_final_class_ids]
+
+        # Check if there happens to be a cache file of pre-computed window
+        # vectors available to load.
+        #
+        # Caching is even possible if:
+        # * given a directory home for cache files
+        # * input COCO dataset filepaths are real and can be checksum'ed.
+        has_vector_cache = False
+        cache_filepath = None
+        activity_coco_fpath = Path(activity_coco.fpath)
+        dets_coco_fpath = Path(dets_coco.fpath)
+        pose_coco_fpath = Path(pose_coco.fpath)
+        if (
+            pre_vectorize
+            and cache_dir is not None
+            and activity_coco_fpath.is_file()
+            and dets_coco_fpath.is_file()
+            and pose_coco_fpath.is_file()
+        ):
+            # Make this into a function?
+            with open(activity_coco_fpath, "rb") as f:
+                act_sha256 = sha256(f.read()).hexdigest()
+            with open(dets_coco_fpath, "rb") as f:
+                det_sha256 = sha256(f.read()).hexdigest()
+            with open(pose_coco_fpath, "rb") as f:
+                pos_sha256 = sha256(f.read()).hexdigest()
+            # Include vectorization variables in the name of the file.
+            # Note the "z" in the name, expecting to use savez_compressed.
+            cache_filename = "{}_{}_{}_{:.2f}_{:d}_{:d}.npz".format(
+                act_sha256,
+                det_sha256,
+                pos_sha256,
+                target_framerate,
+                self.window_size,
+                self.feature_version,
+            )
+            cache_filepath = Path(cache_dir) / cache_filename
+            has_vector_cache = cache_filepath.is_file()
+
+        if pre_vectorize:
+            if has_vector_cache:
+                # TODO: Load cache
+                with np.load(cache_filepath) as data:
+                    self._window_vectors = data["window_vectors"]
+            else:
+                # Pre-vectorize data for iteration efficiency during training.
+                window_vectors: List[npt.NDArray[float]] = []
+                itable = (self._vectorize_window(d) for d in window_data)
+                # pool = ThreadPoolExecutor()
+                # pool = ProcessPoolExecutor(max_workers=4)
+                # itable = pool.map(self._vectorize_window, window_data)
+                for one_vector in tqdm(
+                    itable,
+                    desc="Windows vectorized",
+                    total=len(window_data),
+                    unit="windows",
+                ):
+                    # Pre-allocate matrix on first compute which will give us
+                    # the vector shape.
+                    window_vectors.append(one_vector)
+                self._window_vectors = window_vectors
+                if cache_filepath is not None:
+                    cache_filepath.parent.mkdir(parents=True, exist_ok=True)
+                    np.savez_compressed(
+                        cache_filepath,
+                        window_vectors=window_vectors,
+                    )
 
     def load_data_online(
         self,
@@ -378,13 +498,15 @@ class TCNDataset(Dataset):
         window_vid = self._window_vid[index]
         window_frames = self._window_frames[index]
 
-        tcn_vector = vectorize_window(
-            frame_data=window_data,
-            # The following arguments may be specific to the "classic" version
-            # feature construction.
-            det_class_labels=self._det_label_vec,
-            feat_version=self.feature_version,
-        )
+        window_vectors = self._window_vectors
+        if window_vectors is not None:
+            tcn_vector = window_vectors[index]
+        else:
+            tcn_vector = self._vectorize_window(window_data)
+
+        # Augmentation has to happen on the fly and cannot be pre-computed due
+        # to random aspects that augmentation can be configured to have during
+        # training.
         if self.transform is not None:
             tcn_vector = self.transform(tcn_vector)
 
@@ -413,16 +535,16 @@ if __name__ == "__main__":
 
     # Example usage:
     activity_coco = kwcoco.CocoDataset(
-        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/TEST-activity_truth.coco.json"
-        "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/activity_truth.coco.json"
+        "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/TEST-activity_truth.coco.json"
+        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/activity_truth.coco.json"
     )
     dets_coco = kwcoco.CocoDataset(
-        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/TEST-object_detections.coco.json"
-        "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/all_object_detections.coco.json"
+        "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/TEST-object_detections.coco.json"
+        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/all_object_detections.coco.json"
     )
     pose_coco = kwcoco.CocoDataset(
-        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/TEST-pose_estimates.coco.json"
-        "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/all_poses.coco.json"
+        "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/TEST-pose_estimates.coco.json"
+        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/all_poses.coco.json"
     )
 
     dataset = TCNDataset(window_size=25, feature_version=6)
@@ -431,10 +553,11 @@ if __name__ == "__main__":
         dets_coco,
         pose_coco,
         target_framerate=15,
+        cache_dir="/home/local/KHQ/paul.tunison/dev/darpa-ptg/angel_system/python-tpl/TCN_HPL/test_cache",
     )
 
     print(f"dataset: {len(dataset)}")
-    batch_size=512  # 16
+    batch_size = 512  # 16
     data_loader = torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
@@ -453,4 +576,6 @@ if __name__ == "__main__":
         count += 1
     duration = time.time() - s
 
-    print(f"Total batches of size {batch_size}: {count} ({duration:.02f} seconds total)")
+    print(
+        f"Total batches of size {batch_size}: {count} ({duration:.02f} seconds total)"
+    )
