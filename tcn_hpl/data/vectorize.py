@@ -23,8 +23,8 @@ class FrameObjectDetections:
     All sequences should be the same length.
     """
 
-    # Detection 2D bounding boxes in xywh format for the left, width, height and
-    # bottom coordinates respectively. Shape: (num_detections, 4)
+    # Detection 2D bounding boxes in xywh format for the left, top, width and
+    # height measurements respectively. Shape: (num_detections, 4)
     boxes: npt.NDArray[float]
     # Object category ID of the most confident class. Shape: (num_detections,)
     labels: npt.NDArray[int]
@@ -93,7 +93,6 @@ def _class_labels_to_map(
     The output mapping will map labels to 0-based indices based on the order of
     the labels provided.
     """
-
     lbl_to_idx = {lbl: i for i, lbl in enumerate(class_labels) if lbl is not None}
     # Determine min index to subtract.
     min_cat = min(lbl_to_idx.values())
@@ -148,12 +147,12 @@ def vectorize_window(
 
     f_vecs: tg.List[tg.Optional[npt.NDArray[float]]] = [None] * len(frame_data)
     for i, f_data in enumerate(frame_data):
-        if f_data.object_detections is None:
+        f_dets = f_data.object_detections
+        if f_dets is None:
             # Cannot proceed with classic vector computation without object
             # detections.
             continue
 
-        f_dets = f_data.object_detections
         # extract object detection xywh as 4 component vectors.
         det_xs = f_dets.boxes.T[0]
         det_ys = f_dets.boxes.T[1]
@@ -164,8 +163,8 @@ def vectorize_window(
         # If multiple poses, select the most confident "patient" pose.
         # If there was no pose on this frame, provide a list of 0's equal in
         # length to the number of joints.
-        if f_data.poses.scores.size:
-            f_poses = f_data.poses
+        f_poses = f_data.poses
+        if f_poses is not None and f_poses.scores.size:
             best_pose_idx = np.argmax(f_poses.scores)
             pose_kps = [
                 {"xy": joint_pt}
