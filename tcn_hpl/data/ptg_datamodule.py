@@ -1,16 +1,48 @@
-import kwcoco
-import torch
-import torchvision
+import os.path
+from pathlib import Path
 
-# from lightning import LightningDataModule
+import hydra
+import kwcoco
 from pytorch_lightning import LightningDataModule
-from torch.utils.data import DataLoader, Dataset
+import torch
+from torch.utils.data import DataLoader
 from torchvision.transforms import transforms
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Optional
 
 from .tcn_dataset import TCNDataset
-from .components.PTG_dataset import PTG_Dataset
-from .components.augmentations import MoveCenterPts, NormalizePixelPts
+
+
+def create_dataset_from_hydra(
+    model_hydra_conf: Path,
+    split: str = "test",
+) -> "TCNDataset":
+    """
+    Create a TCNDataset for some specified split based on the Hydra
+    configuration file.
+
+    E.g. from a training run
+        * `.hydra/config.yaml`
+        * `csv/version_0/hparams.yaml`
+
+    No data will have be loaded into the dataset as a result of this call. That
+    is still for the user to perform.
+
+    :param model_hydra_conf:
+    :param split: Which split we should read the cofniguration for. This should
+        be one of "train", "val", or "test".
+
+    :return: New TCNDataset.
+    """
+    assert model_hydra_conf.is_file()
+    # Apparently hydra requires that the path provided to initialize is a
+    # relative path, even if it is just a bunch of `../../` etc. stuff. This
+    # relative path must also be relative to **THIS FILE** that this function
+    # is implemented in.
+    dir_path = Path(os.path.relpath(model_hydra_conf.parent, Path(__file__).parent))
+    file_name_stem = model_hydra_conf.stem
+    with hydra.initialize(config_path=dir_path.as_posix(), version_base=None):
+        cfg = hydra.compose(config_name=file_name_stem)
+    return hydra.utils.instantiate(cfg.data[f"{split}_dataset"])
 
 
 class PTGDataModule(LightningDataModule):
@@ -60,6 +92,9 @@ class PTGDataModule(LightningDataModule):
 
     def __init__(
         self,
+        train_dataset: TCNDataset,
+        val_dataset: TCNDataset,
+        test_dataset: TCNDataset,
         coco_train_activities: str,
         coco_train_objects: str,
         coco_train_poses: str,
@@ -72,14 +107,9 @@ class PTGDataModule(LightningDataModule):
         vector_cache_dir: str,
         batch_size: int,
         num_workers: int,
-        window_size: int,
         target_framerate: float,
-        feature_version: int,
         epoch_length: int,
         pin_memory: bool,
-        all_transforms: Any,
-        # accept arbitrary other stuff for configuration convenience.
-        **kwargs,
     ) -> None:
         """Initialize a `PTGDataModule`.
 
@@ -101,6 +131,8 @@ class PTGDataModule(LightningDataModule):
             object detections to use for training.
         :param coco_test_poses: Path to the COCO file with test-split
             pose estimations to use for training.
+        :vector_cache_dir: Directory path to store cache files related to
+            dataset vectory computation.
         :param batch_size: The batch size. Defaults to `64`.
         :param num_workers: The number of workers. Defaults to `0`.
         :param pin_memory: Whether to pin memory. Defaults to `False`.
@@ -109,40 +141,14 @@ class PTGDataModule(LightningDataModule):
 
         # this line allows to access init params with 'self.hparams' attribute
         # also ensures init params will be stored in ckpt
-        self.save_hyperparameters(logger=False)
+        self.save_hyperparameters(
+            logger=False,
+            ignore=["train_dataset", "val_dataset", "test_dataset"]
+        )
 
-        # data transformations
-        transforms_list = []
-        for transform_name in all_transforms["train_order"]:
-            transforms_list.append(all_transforms[transform_name])
-        self.train_transform = transforms.Compose(transforms_list)
-
-        transforms_list = []
-        for transform_name in all_transforms["test_order"]:
-            transforms_list.append(all_transforms[transform_name])
-        self.val_transform = transforms.Compose(transforms_list)
-
-        self.data_train: Optional[TCNDataset] = None
-        self.data_val: Optional[TCNDataset] = None
-        self.data_test: Optional[TCNDataset] = None
-
-    @property
-    def num_classes(self) -> int:
-        """Get the number of classes.
-
-        :return: The number of activity classes.
-        """
-        return self.hparams.num_classes
-
-    def prepare_data(self) -> None:
-        """Download data if needed. Lightning ensures that `self.prepare_data()` is called only
-        within a single process on CPU, so you can safely add your downloading logic within. In
-        case of multi-node training, the execution of this hook depends upon
-        `self.prepare_data_per_node()`.
-
-        Do not use it to assign state (self.x = y).
-        """
-        pass
+        self.data_train: Optional[TCNDataset] = train_dataset
+        self.data_val: Optional[TCNDataset] = val_dataset
+        self.data_test: Optional[TCNDataset] = test_dataset
 
     def setup(self, stage: Optional[str] = None) -> None:
         """Load data. Set variables: `self.data_train`, `self.data_val`, `self.data_test`.
@@ -156,11 +162,6 @@ class PTGDataModule(LightningDataModule):
         """
         # load and split datasets only if not loaded already
         if not self.data_train and not self.data_val and not self.data_test:
-            self.data_train = TCNDataset(
-                self.hparams.window_size,
-                self.hparams.feature_version,
-                self.train_transform,
-            )
             self.data_train.load_data_offline(
                 kwcoco.CocoDataset(self.hparams.coco_train_activities),
                 kwcoco.CocoDataset(self.hparams.coco_train_objects),
@@ -169,12 +170,6 @@ class PTGDataModule(LightningDataModule):
                 pre_vectorize=True,
                 cache_dir=self.hparams.vector_cache_dir,
             )
-
-            self.data_val = TCNDataset(
-                self.hparams.window_size,
-                self.hparams.feature_version,
-                self.val_transform,
-            )
             self.data_val.load_data_offline(
                 kwcoco.CocoDataset(self.hparams.coco_validation_activities),
                 kwcoco.CocoDataset(self.hparams.coco_validation_objects),
@@ -182,12 +177,6 @@ class PTGDataModule(LightningDataModule):
                 self.hparams.target_framerate,
                 pre_vectorize=True,
                 cache_dir=self.hparams.vector_cache_dir,
-            )
-
-            self.data_test = TCNDataset(
-                self.hparams.window_size,
-                self.hparams.feature_version,
-                self.val_transform,
             )
             self.data_test.load_data_offline(
                 kwcoco.CocoDataset(self.hparams.coco_test_activities),
