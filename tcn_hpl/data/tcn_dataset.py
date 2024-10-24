@@ -92,12 +92,13 @@ class TCNDataset(Dataset):
         # Optionally defined set of pre-computed window vectors.
         self._window_vectors: Optional[npt.NDArray[float]] = None
 
-        # Mapping of object detection category semantic names to their ID
-        # (index) value. This is not the inverse mapping as object detection
-        # output may not provide all possible model classes, i.e. may subtract
-        # the "background" class, which would mean some index is not being
-        # represented.
+        # Sequence of object detection category semantic names in their
+        # relative category ID order. For use with classic vectorization logic.
         # This attribute should be set by the `load_*` methods.
+        # This will need to have enough indices such that any object detection
+        # prediction category ID ("label") will map to something. It is
+        # generally assumed that the first index (0) must be for the background
+        # class despite such a class not being represented predictions.
         self._det_label_vec: Sequence[Optional[str]] = []
 
         # Constant 1's mask value to re-use during get-item.
@@ -240,10 +241,18 @@ class TCNDataset(Dataset):
             np.ndarray(shape=(0, num_pose_keypoints)),
         )
 
-        # Save object detection category to index mapping.
+        # Save object detection category names in relative ID order.
+        # This is ultimately being saved for the classic version of
+        # vectorization which merely wants
+        # The +1 is here because we know the background category is not being
+        # included in object detection output that has historically been fed
+        # into here.
         det_label_vec = [None] * (max(dets_coco.cats) + 1)
         for c in dets_coco.cats.values():
             det_label_vec[c["id"]] = c["name"]
+        assert (
+            det_label_vec[0] is None
+        ), "Not expecting input dataset categories to include the background class."
         self._det_label_vec = tuple(det_label_vec)
 
         #
@@ -451,8 +460,9 @@ class TCNDataset(Dataset):
             det_class_label_vec:
                 Sequence of string labels mapping predicted object detection
                 class label integers into strings. This is generally all
-                categories that the detector may predict, in index order, sans
-                the "background" class.
+                categories that the detector may predict, in index order.
+                The background class should be left out as a string in
+                sequence, but instead be represented by a None value.
         """
         # Just load one windows worth of stuff so only __getitem__(0) makes
         # sense.
