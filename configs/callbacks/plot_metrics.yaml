@@ -1,0 +1,4 @@
+plot_metrics:
+  _target_: tcn_hpl.callbacks.plot_metrics.PlotMetrics
+  output_dir: ${paths.output_dir}
+  # TODO: Could point this at an activity truth COCO for class labels.

@@ -1,6 +1,5 @@
 import os
 import yaml
-import glob
 import warnings
 import kwcoco
 import argparse
@@ -15,13 +14,12 @@ from angel_system.activity_classification.train_activity_classifier import (
     data_loader,
     compute_feats,
 )
-from angel_system.activity_classification.utils import (
+from tcn_hpl.data.vectorize_classic import (
     feature_version_to_options,
     plot_feature_vec,
 )
 
 from angel_system.data.medical.data_paths import TASK_TO_NAME
-from angel_system.data.medical.data_paths import LAB_TASK_TO_NAME
 from angel_system.data.medical.load_bbn_data import bbn_activity_txt_to_csv
 from angel_system.data.common.kwcoco_utils import add_activity_gt_to_kwcoco
 

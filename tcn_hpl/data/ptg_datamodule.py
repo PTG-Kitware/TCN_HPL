@@ -1,15 +1,48 @@
-import torch
-import torchvision
+import os.path
+from pathlib import Path
 
-# from lightning import LightningDataModule
+import hydra
+import kwcoco
 from pytorch_lightning import LightningDataModule
-
-from torch.utils.data import DataLoader, Dataset
+import torch
+from torch.utils.data import DataLoader
 from torchvision.transforms import transforms
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Optional
 
-from .components.PTG_dataset import PTG_Dataset
-from .components.augmentations import MoveCenterPts, NormalizePixelPts
+from .tcn_dataset import TCNDataset
+
+
+def create_dataset_from_hydra(
+    model_hydra_conf: Path,
+    split: str = "test",
+) -> "TCNDataset":
+    """
+    Create a TCNDataset for some specified split based on the Hydra
+    configuration file.
+
+    E.g. from a training run
+        * `.hydra/config.yaml`
+        * `csv/version_0/hparams.yaml`
+
+    No data will have be loaded into the dataset as a result of this call. That
+    is still for the user to perform.
+
+    :param model_hydra_conf:
+    :param split: Which split we should read the cofniguration for. This should
+        be one of "train", "val", or "test".
+
+    :return: New TCNDataset.
+    """
+    assert model_hydra_conf.is_file()
+    # Apparently hydra requires that the path provided to initialize is a
+    # relative path, even if it is just a bunch of `../../` etc. stuff. This
+    # relative path must also be relative to **THIS FILE** that this function
+    # is implemented in.
+    dir_path = Path(os.path.relpath(model_hydra_conf.parent, Path(__file__).parent))
+    file_name_stem = model_hydra_conf.stem
+    with hydra.initialize(config_path=dir_path.as_posix(), version_base=None):
+        cfg = hydra.compose(config_name=file_name_stem)
+    return hydra.utils.instantiate(cfg.data[f"{split}_dataset"])
 
 
 class PTGDataModule(LightningDataModule):
@@ -59,21 +92,47 @@ class PTGDataModule(LightningDataModule):
 
     def __init__(
         self,
-        data_dir: str,
+        train_dataset: TCNDataset,
+        val_dataset: TCNDataset,
+        test_dataset: TCNDataset,
+        coco_train_activities: str,
+        coco_train_objects: str,
+        coco_train_poses: str,
+        coco_validation_activities: str,
+        coco_validation_objects: str,
+        coco_validation_poses: str,
+        coco_test_activities: str,
+        coco_test_objects: str,
+        coco_test_poses: str,
+        vector_cache_dir: str,
         batch_size: int,
         num_workers: int,
-        num_classes: int,
-        sample_rate: int,
-        window_size: int,
-        split: int,
+        target_framerate: float,
         epoch_length: int,
         pin_memory: bool,
-        all_transforms: Any,
     ) -> None:
         """Initialize a `PTGDataModule`.
 
-        :param data_dir: The data directory. Defaults to `"data/"`.
-        :param train_val_test_split: The train, validation and test split. Defaults to `(55_000, 5_000, 10_000)`.
+        :param coco_train_activities: Path to the COCO file with train-split
+            activity classification ground truth.
+        :param coco_train_objects: Path to the COCO file with train-split
+            object detections to use for training.
+        :param coco_train_poses: Path to the COCO file with train-split pose
+            estimations to use for training.
+        :param coco_validation_activities: Path to the COCO file with
+            validation-split activity classification ground truth.
+        :param coco_validation_objects: Path to the COCO file with
+            validation-split object detections to use for training.
+        :param coco_validation_poses: Path to the COCO file with train-split
+            pose estimations to use for training.
+        :param coco_test_activities: Path to the COCO file with test-split
+            activity classification ground truth.
+        :param coco_test_objects: Path to the COCO file with test-split
+            object detections to use for training.
+        :param coco_test_poses: Path to the COCO file with test-split
+            pose estimations to use for training.
+        :vector_cache_dir: Directory path to store cache files related to
+            dataset vectory computation.
         :param batch_size: The batch size. Defaults to `64`.
         :param num_workers: The number of workers. Defaults to `0`.
         :param pin_memory: Whether to pin memory. Defaults to `False`.
@@ -82,40 +141,14 @@ class PTGDataModule(LightningDataModule):
 
         # this line allows to access init params with 'self.hparams' attribute
         # also ensures init params will be stored in ckpt
-        self.save_hyperparameters(logger=False)
+        self.save_hyperparameters(
+            logger=False,
+            ignore=["train_dataset", "val_dataset", "test_dataset"]
+        )
 
-        # data transformations
-        transforms_list = []
-        for transform_name in all_transforms["train_order"]:
-            transforms_list.append(all_transforms[transform_name])
-        self.train_transform = transforms.Compose(transforms_list)
-
-        transforms_list = []
-        for transform_name in all_transforms["test_order"]:
-            transforms_list.append(all_transforms[transform_name])
-        self.val_transform = transforms.Compose(transforms_list)
-
-        self.data_train: Optional[Dataset] = None
-        self.data_val: Optional[Dataset] = None
-        self.data_test: Optional[Dataset] = None
-
-    @property
-    def num_classes(self) -> int:
-        """Get the number of classes.
-
-        :return: The number of activity classes.
-        """
-        return self.hparams.num_classes
-
-    def prepare_data(self) -> None:
-        """Download data if needed. Lightning ensures that `self.prepare_data()` is called only
-        within a single process on CPU, so you can safely add your downloading logic within. In
-        case of multi-node training, the execution of this hook depends upon
-        `self.prepare_data_per_node()`.
-
-        Do not use it to assign state (self.x = y).
-        """
-        pass
+        self.data_train: Optional[TCNDataset] = train_dataset
+        self.data_val: Optional[TCNDataset] = val_dataset
+        self.data_test: Optional[TCNDataset] = test_dataset
 
     def setup(self, stage: Optional[str] = None) -> None:
         """Load data. Set variables: `self.data_train`, `self.data_val`, `self.data_test`.
@@ -129,81 +162,29 @@ class PTGDataModule(LightningDataModule):
         """
         # load and split datasets only if not loaded already
         if not self.data_train and not self.data_val and not self.data_test:
-            exp_data = self.hparams.data_dir
-
-            vid_list_file = f"{exp_data}/splits/train.split{self.hparams.split}.bundle"
-            vid_list_file_val = (
-                f"{exp_data}/splits/val.split{self.hparams.split}.bundle"
+            self.data_train.load_data_offline(
+                kwcoco.CocoDataset(self.hparams.coco_train_activities),
+                kwcoco.CocoDataset(self.hparams.coco_train_objects),
+                kwcoco.CocoDataset(self.hparams.coco_train_poses),
+                self.hparams.target_framerate,
+                pre_vectorize=True,
+                cache_dir=self.hparams.vector_cache_dir,
             )
-            vid_list_file_tst = (
-                f"{exp_data}/splits/test.split{self.hparams.split}.bundle"
+            self.data_val.load_data_offline(
+                kwcoco.CocoDataset(self.hparams.coco_validation_activities),
+                kwcoco.CocoDataset(self.hparams.coco_validation_objects),
+                kwcoco.CocoDataset(self.hparams.coco_validation_poses),
+                self.hparams.target_framerate,
+                pre_vectorize=True,
+                cache_dir=self.hparams.vector_cache_dir,
             )
-
-            features_path = f"{exp_data}/features/"
-            gt_path = f"{exp_data}/groundTruth/"
-            mapping_file = f"{exp_data}/mapping.txt"
-
-            #####################
-            # Get Action Names
-            #####################
-            file_ptr = open(mapping_file, "r")
-            actions = file_ptr.read().split("\n")[:-1]
-            file_ptr.close()
-            actions_dict = dict()
-            for a in actions:
-                actions_dict[a.split()[1]] = int(a.split()[0])
-
-            #####################
-            # Get Video Names
-            #####################
-            # Load training vidoes
-            with open(vid_list_file, "r") as train_f:
-                train_videos = train_f.read().split("\n")[:-1]
-
-            # print(f"train_vids: {train_videos}")
-            # exit()
-            # Load validation vidoes
-            with open(vid_list_file_val, "r") as val_f:
-                val_videos = val_f.read().split("\n")[:-1]
-
-            # Load test videos
-            with open(vid_list_file_tst, "r") as test_f:
-                test_videos = test_f.read().split("\n")[:-1]
-
-            self.data_train = PTG_Dataset(
-                train_videos,
-                self.hparams.num_classes,
-                actions_dict,
-                gt_path,
-                features_path,
-                self.hparams.sample_rate,
-                self.hparams.window_size,
-                transform=self.train_transform,
-            )
-
-            # print(f"size:{self.data_train.__len__()}")
-            # exit()
-
-            self.data_val = PTG_Dataset(
-                val_videos,
-                self.hparams.num_classes,
-                actions_dict,
-                gt_path,
-                features_path,
-                self.hparams.sample_rate,
-                self.hparams.window_size,
-                transform=self.val_transform,
-            )
-
-            self.data_test = PTG_Dataset(
-                test_videos,
-                self.hparams.num_classes,
-                actions_dict,
-                gt_path,
-                features_path,
-                self.hparams.sample_rate,
-                self.hparams.window_size,
-                transform=self.val_transform,
+            self.data_test.load_data_offline(
+                kwcoco.CocoDataset(self.hparams.coco_test_activities),
+                kwcoco.CocoDataset(self.hparams.coco_test_objects),
+                kwcoco.CocoDataset(self.hparams.coco_test_poses),
+                self.hparams.target_framerate,
+                pre_vectorize=True,
+                cache_dir=self.hparams.vector_cache_dir,
             )
 
     def train_dataloader(self) -> DataLoader[Any]:
@@ -212,7 +193,7 @@ class PTGDataModule(LightningDataModule):
         :return: The train dataloader.
         """
         train_sampler = torch.utils.data.WeightedRandomSampler(
-            self.data_train.weights,
+            self.data_train.window_weights,
             self.hparams.epoch_length,
             replacement=True,
             generator=None,
@@ -251,31 +232,3 @@ class PTGDataModule(LightningDataModule):
             pin_memory=self.hparams.pin_memory,
             shuffle=False,
         )
-
-    def teardown(self, stage: Optional[str] = None) -> None:
-        """Lightning hook for cleaning up after `trainer.fit()`, `trainer.validate()`,
-        `trainer.test()`, and `trainer.predict()`.
-
-        :param stage: The stage being torn down. Either `"fit"`, `"validate"`, `"test"`, or `"predict"`.
-            Defaults to ``None``.
-        """
-        pass
-
-    def state_dict(self) -> Dict[Any, Any]:
-        """Called when saving a checkpoint. Implement to generate and save the datamodule state.
-
-        :return: A dictionary containing the datamodule state that you want to save.
-        """
-        return {}
-
-    def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
-        """Called when loading a checkpoint. Implement to reload datamodule state given datamodule
-        `state_dict()`.
-
-        :param state_dict: The datamodule state returned by `self.state_dict()`.
-        """
-        pass
-
-
-if __name__ == "__main__":
-    _ = PTGDataModule()

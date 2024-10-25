@@ -195,7 +195,7 @@ class PosesGenerator(object):
             Key-point matrices, when output, should be of shape n_joints x 3,
             where each row is [x, y, score].
         """
-        predictions, _ = self.predictor.run_on_image(image)
+        predictions, _ = self.predictor.run_on_image(image, visualize=False)
         instances = predictions["instances"].to("cpu")
         boxes: npt.NDArray = (
             instances.pred_boxes.tensor.numpy()

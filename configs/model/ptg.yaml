@@ -20,20 +20,17 @@ net:
   num_f_maps: 128
   # dim: 204
   dim: 128
-  num_classes: ${data.num_classes}
-  window_size: ${data.window_size}
+  num_classes: ${model.num_classes}
+  window_size: ${data.train_dataset.window_size}
 
 criterion:
   _target_: tcn_hpl.models.components.focal_loss.FocalLoss
   alpha: 0.25 # 0.25
   gamma: 1
-  weight: None 
+  weight: None
   # weight: [1, 1, 1, 1, 1, 0.75, 0.75, 1, 1]
   # weight: [1, 1, 1, 1, 1, 1]
   reduction: "mean"
-
-topic: ${topic}
-data_dir: ${paths.data_dir}
 
 # Smoothing loss weight
 smoothing_loss: 0.0015
@@ -44,6 +41,3 @@ num_classes: ${data.num_classes}
 
 # compile model for faster training with pytorch 2.0
 compile: false
-
-# Hydra output dir
-output_dir: ${paths.output_dir}
