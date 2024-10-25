@@ -13,6 +13,7 @@ from jedi.plugins.stdlib import functools_partial
 from tcn_hpl.data.vectorize_classic import (
     obj_det2d_set_to_feature,
     zero_joint_offset,
+    default_bbox
 )
 
 
@@ -167,24 +168,26 @@ def vectorize_window(
         if f_data.poses.scores.size:
             f_poses = f_data.poses
             best_pose_idx = np.argmax(f_poses.scores)
+            best_pose_score = np.max(f_poses.scores)
             pose_kps = [
-                {"xy": joint_pt}
-                for joint_pt in f_poses.joint_positions[best_pose_idx]
+                {"xy": joint_pt, "score": joint_score}
+                for (joint_pt, joint_score) in zip(f_poses.joint_positions[best_pose_idx], f_poses.joint_scores[best_pose_idx])
             ]
         else:
             # special value for the classic method to indicate no pose joints.
             pose_kps = zero_joint_offset
+        casualty = {"score": , "xywh": }
 
-        frame_feat = obj_det2d_set_to_feature(
+        frame_feat = obj_det2d_set_to_feature_by_method_new(
             label_vec=[det_class_labels[lbl] for lbl in f_dets.labels],
             xs=det_xs,
             ys=det_ys,
             ws=det_ws,
             hs=det_hs,
             label_confidences=f_dets.scores,
+            pose_confidence=best_pose_score,
             pose_keypoints=pose_kps,
             obj_label_to_ind=obj_label_to_ind,
-            version=feat_version,
             top_k_objects=top_k_objects,
         ).ravel().astype(feat_dtype)
         feat_dim = frame_feat.size
@@ -205,3 +208,153 @@ def vectorize_window(
             f_vecs[i] = empty_vec
 
     return np.asarray(f_vecs)
+
+def obj_det2d_set_to_feature_by_method_new(
+    label_vec: List[str],
+    xs: List[float],
+    ys: List[float],
+    ws: List[float],
+    hs: List[float],
+    label_confidences: List[float],
+    pose_confidence: float,
+    pose_keypoints: List[Dict],
+    obj_label_to_ind: Dict[str, int],
+    top_k_objects: int = 1,
+    ):
+    """
+    :param label_vec: List of object labels for each detection (length: # detections)
+    :param xs: List of x values for each detection (length: # detections)
+    :param ys: List of y values for each detection (length: # detections)
+    :param ws: List of width values for each detection (length: # detections)
+    :param hs: List of height values for each detection (length: # detections)
+    :param label_confidences: List of confidence values for each detection (length: # detections)
+    :param pose_keypoints:
+        List of joints, represented by a dictionary contining the x and y corrdinates of the points and the category id and string
+    :param obj_label_to_ind:
+        Dictionary mapping a label str and returns the index within the feature vector.
+    :param top_k_objects: Number top confidence objects to use per label, defaults to 1
+    :param use_activation: If True, add the confidence values of the detections to the feature vector, defaults to False
+    :param use_hand_dist: If True, add the distance of the detection centers to both hand centers to the feature vector, defaults to False
+    :param use_intersection: If True, add the intersection of the detection boxes with the hand boxes to the feature vector, defaults to False
+    :param use_joint_hand_offset: If True, add the distance of the hand centers to the patient joints to the feature vector, defaults to False
+    :param use_joint_object_offset: If True, add the distance of the object centers to the patient joints to the feature vector, defaults to False
+
+    :return:
+        resulting feature data
+    """
+    #########################
+    # Data
+    #########################
+    # Number of object detection classes
+    num_det_classes = len(obj_label_to_ind)
+
+    # Maximum confidence observe per-class across input object detections.
+    # If a class has not been observed, it is set to 0 confidence.
+    det_class_max_conf = np.zeros((num_det_classes, top_k_objects))
+    # The bounding box of the maximally confident detection
+    det_class_bbox = np.zeros((top_k_objects, num_det_classes, 4), dtype=np.float64)
+    det_class_bbox[:] = default_bbox
+
+    # Binary mask indicates which detection classes are present on this frame.
+    det_class_mask = np.zeros((top_k_objects, num_det_classes), dtype=np.bool_)
+
+    # Record the most confident detection for each object class as recorded in
+    # `obj_label_to_ind` (confidence & bbox)
+    for i, label in enumerate(label_vec):
+        assert label in obj_label_to_ind, f"Label {label} is unknown"
+
+        conf = label_confidences[i]
+        ind = obj_label_to_ind[label]
+
+        conf_list = det_class_max_conf[ind, :]
+        if conf > det_class_max_conf[ind].min():
+            # Replace the lowest confidence object with our new higher confidence object
+            min_conf_ind = np.where(conf_list == conf_list.min())[0][0]
+
+            conf_list[min_conf_ind] = conf
+            det_class_bbox[min_conf_ind, ind] = [xs[i], ys[i], ws[i], hs[i]]
+            det_class_mask[min_conf_ind, ind] = True
+
+            # Sort the confidences to determine the top_k order
+            sorted_index = np.argsort(conf_list)[::-1]
+            sorted_conf_list = np.array([conf_list[k] for k in sorted_index])
+
+            # Reorder the values to match the confidence top_k order
+            det_class_max_conf[ind] = sorted_conf_list
+
+            bboxes = det_class_bbox.copy()
+            mask = det_class_mask.copy()
+            for idx, sorted_ind in enumerate(sorted_index):
+                det_class_bbox[idx, ind] = bboxes[sorted_ind, ind]
+                det_class_mask[idx, ind] = mask[sorted_ind, ind]
+
+    #########################
+    # util functions
+    #########################
+    def find_hand(hand_str):
+        hand_idx = obj_label_to_ind[hand_str]
+        hand_conf = det_class_max_conf[hand_idx][0]
+        hand_bbox = kwimage.Boxes([det_class_bbox[0, hand_idx]], "xywh")
+
+        return hand_idx, hand_bbox, hand_conf, hand_bbox.center
+
+    #########################
+    # Hands
+    #########################
+    # Find the right hand
+    (right_hand_idx, right_hand_bbox, right_hand_conf, right_hand_center) = find_hand(
+        "hand (right)"
+    )
+
+    # Find the left hand
+    (left_hand_idx, left_hand_bbox, left_hand_conf, left_hand_center) = find_hand(
+        "hand (left)"
+    )
+
+    #########################
+    # Feature vector
+    #########################
+    feature_vec = np.zeros(97)
+    i = 0
+
+    # HANDS
+    # Both hands' confidence, X, Y, W, H
+    right_hand_bbox, right_hand_conf
+    feature_vec[i] = right_hand_conf
+    i += 1
+    feature_vec[i:i+4] = right_hand_bbox
+    i += 4
+    feature_vec[i] = left_hand_conf
+    i += 1
+    feature_vec[i:i+4] = left_hand_bbox
+    i += 4
+
+    # OBJECTS
+    # All top-confidence objects' Confidence, X, Y, W, H
+    # To use "top_k_objects" to implement K > 1, The 0 index below should be an iterable.
+    for obj_ind in range(num_det_classes):
+        feature_vec.append([det_class_max_conf[obj_ind][0]])
+
+        # Confidence
+        feature_vec[i] = det_class_max_conf[obj_ind][0]
+        i += 1
+        # Coordinates
+        feature_vec[i:i+4] = det_class_bbox[0][obj_ind]
+        i += 4
+
+    # CASUALTY
+    # Casualty object Confidence (TODO: get X, Y, W, H)
+    feature_vec[i] = pose_confidence
+    i += 1
+
+    # POSE JOINTS
+    # All pose joints' conf, X, Y
+    for joint in pose_keypoints:
+        jscore = joint["score"]
+        jx, jy = joint["xy"]
+        feature_vec[i] = joint["score"]
+        i += 1
+        feature_vec[i:i+2] = joint["xy"]
+        i += 2
+
+    return feature_vec
