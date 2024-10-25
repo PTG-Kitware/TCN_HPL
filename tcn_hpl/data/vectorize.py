@@ -13,7 +13,7 @@ from jedi.plugins.stdlib import functools_partial
 from tcn_hpl.data.vectorize_classic import (
     obj_det2d_set_to_feature,
     zero_joint_offset,
-    default_bbox
+    default_bbox,
 )
 
 
@@ -85,7 +85,7 @@ class FrameData:
 
 @functools.lru_cache()
 def _class_labels_to_map(
-    class_labels: tg.Sequence[tg.Optional[str]]
+    class_labels: tg.Sequence[tg.Optional[str]],
 ) -> tg.Dict[str, int]:
     """
     Transform a sequence of class label strings into a mapping from label name
@@ -100,8 +100,8 @@ def _class_labels_to_map(
     min_cat = min(lbl_to_idx.values())
     for k in lbl_to_idx:
         lbl_to_idx[k] -= min_cat
-    assert (
-        set(lbl_to_idx.values()) == set(range(len(lbl_to_idx)))
+    assert set(lbl_to_idx.values()) == set(
+        range(len(lbl_to_idx))
     ), "Resulting category indices must start at 0 and be contiguous."
     return lbl_to_idx
 
@@ -171,33 +171,38 @@ def vectorize_window(
             best_pose_score = np.max(f_poses.scores)
             pose_kps = [
                 {"xy": joint_pt, "score": joint_score}
-                for (joint_pt, joint_score) in zip(f_poses.joint_positions[best_pose_idx], f_poses.joint_scores[best_pose_idx])
+                for (joint_pt, joint_score) in zip(
+                    f_poses.joint_positions[best_pose_idx],
+                    f_poses.joint_scores[best_pose_idx],
+                )
             ]
         else:
             # special value for the classic method to indicate no pose joints.
             pose_kps = zero_joint_offset
 
-        frame_feat = obj_det2d_set_to_feature_by_method_new(
-            label_vec=[det_class_labels[lbl] for lbl in f_dets.labels],
-            xs=det_xs,
-            ys=det_ys,
-            ws=det_ws,
-            hs=det_hs,
-            label_confidences=f_dets.scores,
-            pose_confidence=best_pose_score,
-            pose_keypoints=pose_kps,
-            obj_label_to_ind=obj_label_to_ind,
-            top_k_objects=top_k_objects,
-        ).ravel().astype(feat_dtype)
+        frame_feat = (
+            obj_det2d_set_to_feature_by_method_new(
+                label_vec=[det_class_labels[lbl] for lbl in f_dets.labels],
+                xs=det_xs,
+                ys=det_ys,
+                ws=det_ws,
+                hs=det_hs,
+                label_confidences=f_dets.scores,
+                pose_confidence=best_pose_score,
+                pose_keypoints=pose_kps,
+                obj_label_to_ind=obj_label_to_ind,
+                top_k_objects=top_k_objects,
+            )
+            .ravel()
+            .astype(feat_dtype)
+        )
         feat_dim = frame_feat.size
         f_vecs[i] = frame_feat
 
     # If a caller is getting this, we could start to throw a more specific
     # error, and the caller could safely catch it to consider this window as
     # whatever the "background" class is.
-    assert (
-        feat_dim is not None
-    ), "No features computed for any frame this window?"
+    assert feat_dim is not None, "No features computed for any frame this window?"
 
     # If a feature fails to be generated for a frame:
     # * insert zero-vector matching dimensionality.
@@ -207,6 +212,7 @@ def vectorize_window(
             f_vecs[i] = empty_vec
 
     return np.asarray(f_vecs)
+
 
 def obj_det2d_set_to_feature_by_method_new(
     label_vec: List[str],
@@ -219,7 +225,7 @@ def obj_det2d_set_to_feature_by_method_new(
     pose_keypoints: List[Dict],
     obj_label_to_ind: Dict[str, int],
     top_k_objects: int = 1,
-    ):
+):
     """
     :param label_vec: List of object labels for each detection (length: # detections)
     :param xs: List of x values for each detection (length: # detections)
@@ -321,11 +327,11 @@ def obj_det2d_set_to_feature_by_method_new(
     right_hand_bbox, right_hand_conf
     feature_vec[i] = right_hand_conf
     i += 1
-    feature_vec[i:i+4] = right_hand_bbox
+    feature_vec[i : i + 4] = right_hand_bbox
     i += 4
     feature_vec[i] = left_hand_conf
     i += 1
-    feature_vec[i:i+4] = left_hand_bbox
+    feature_vec[i : i + 4] = left_hand_bbox
     i += 4
 
     # OBJECTS
@@ -338,7 +344,7 @@ def obj_det2d_set_to_feature_by_method_new(
         feature_vec[i] = det_class_max_conf[obj_ind][0]
         i += 1
         # Coordinates
-        feature_vec[i:i+4] = det_class_bbox[0][obj_ind]
+        feature_vec[i : i + 4] = det_class_bbox[0][obj_ind]
         i += 4
 
     # CASUALTY
@@ -353,7 +359,7 @@ def obj_det2d_set_to_feature_by_method_new(
         jx, jy = joint["xy"]
         feature_vec[i] = joint["score"]
         i += 1
-        feature_vec[i:i+2] = joint["xy"]
+        feature_vec[i : i + 2] = joint["xy"]
         i += 2
 
     return feature_vec
