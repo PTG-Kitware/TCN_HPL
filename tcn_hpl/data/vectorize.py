@@ -176,7 +176,6 @@ def vectorize_window(
         else:
             # special value for the classic method to indicate no pose joints.
             pose_kps = zero_joint_offset
-        casualty = {"score": , "xywh": }
 
         frame_feat = obj_det2d_set_to_feature_by_method_new(
             label_vec=[det_class_labels[lbl] for lbl in f_dets.labels],
