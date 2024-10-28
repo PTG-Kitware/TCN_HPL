@@ -1,5 +1,6 @@
 import logging
 from hashlib import sha256
+import json
 from pathlib import Path
 import time
 from typing import Callable
@@ -18,11 +19,11 @@ import torch
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
-from tcn_hpl.data.vectorize_window import (
-    FrameData,
+from tcn_hpl.data.vectorize import (
     FrameObjectDetections,
     FramePoses,
-    vectorize_window,
+    FrameData,
+    Vectorize,
 )
 
 
@@ -52,8 +53,9 @@ class TCNDataset(Dataset):
         window_size:
             The size of the sliding window used to collect inputs from either a
             real-time or offline source.
-        feature_version:
-            Integer version ID of the feature vector to generate.
+        vectorizer:
+            Vectorization functor to convert frame data into an embedding
+            space.
         transform:
             Optional feature vector transformation/augmentation function.
     """
@@ -61,11 +63,11 @@ class TCNDataset(Dataset):
     def __init__(
         self,
         window_size: int,
-        feature_version: int,
+        vectorizer: Vectorize,
         transform: Optional[Callable] = None,
     ):
         self.window_size = window_size
-        self.feature_version = feature_version
+        self.vectorizer = vectorizer
         self.transform = transform
 
         # For offline mode, pre-cut videos into clips according to window
@@ -92,25 +94,23 @@ class TCNDataset(Dataset):
         # Optionally defined set of pre-computed window vectors.
         self._window_vectors: Optional[npt.NDArray[float]] = None
 
-        # Sequence of object detection category semantic names in their
-        # relative category ID order. For use with classic vectorization logic.
-        # This attribute should be set by the `load_*` methods.
-        # This will need to have enough indices such that any object detection
-        # prediction category ID ("label") will map to something. It is
-        # generally assumed that the first index (0) must be for the background
-        # class despite such a class not being represented predictions.
-        self._det_label_vec: Sequence[Optional[str]] = []
-
         # Constant 1's mask value to re-use during get-item.
         self._ones_mask: npt.NDArray[int] = np.ones(window_size, dtype=int)
 
     @property
     def window_weights(self) -> npt.NDArray[float]:
+        """
+        Get per-index weights to use with a weighted sampler.
+
+        :return: Array of per-index weight floats.
+        """
         if self._window_weights is None:
             raise RuntimeError("No class weights calculated for this dataset.")
         return self._window_weights
 
-    def _vectorize_window(self, window_data: Sequence[FrameData]):
+    def _vectorize_window(
+        self, window_data: Sequence[FrameData]
+    ) -> npt.NDArray[np.float32]:
         """
         Vectorize a single window of data.
         :param window_data: Window of data to vectorize. Must be window-size
@@ -118,14 +118,8 @@ class TCNDataset(Dataset):
         :return: Transformed vector.
         """
         assert len(window_data) == self.window_size
-        tcn_vector = vectorize_window(
-            frame_data=window_data,
-            # The following arguments may be specific to the "classic" version
-            # feature construction.
-            det_class_labels=self._det_label_vec,
-            feat_version=self.feature_version,
-        )
-        return tcn_vector
+        v = self.vectorizer
+        return np.asarray([v(d) for d in window_data])
 
     def load_data_offline(
         self,
@@ -240,20 +234,6 @@ class TCNDataset(Dataset):
             np.ndarray(shape=(0, num_pose_keypoints, 2)),
             np.ndarray(shape=(0, num_pose_keypoints)),
         )
-
-        # Save object detection category names in relative ID order.
-        # This is ultimately being saved for the classic version of
-        # vectorization which merely wants
-        # The +1 is here because we know the background category is not being
-        # included in object detection output that has historically been fed
-        # into here.
-        det_label_vec = [None] * (max(dets_coco.cats) + 1)
-        for c in dets_coco.cats.values():
-            det_label_vec[c["id"]] = c["name"]
-        assert (
-            det_label_vec[0] is None
-        ), "Not expecting input dataset categories to include the background class."
-        self._det_label_vec = tuple(det_label_vec)
 
         #
         # Collect per-frame data first per-video, then slice into windows.
@@ -396,23 +376,19 @@ class TCNDataset(Dataset):
             and dets_coco_fpath.is_file()
             and pose_coco_fpath.is_file()
         ):
-            # Make this into a function?
+            csum = sha256()
             with open(activity_coco_fpath, "rb") as f:
-                act_sha256 = sha256(f.read()).hexdigest()
+                csum.update(f.read())
             with open(dets_coco_fpath, "rb") as f:
-                det_sha256 = sha256(f.read()).hexdigest()
+                csum.update(f.read())
             with open(pose_coco_fpath, "rb") as f:
-                pos_sha256 = sha256(f.read()).hexdigest()
+                csum.update(f.read())
+            csum.update(f"{target_framerate:0.{framerate_round_decimals}f}".encode())
+            csum.update(f"{self.window_size:d}".encode())
+            csum.update(json.dumps(self.vectorizer.hparams()).encode())
             # Include vectorization variables in the name of the file.
             # Note the "z" in the name, expecting to use savez_compressed.
-            cache_filename = "{}_{}_{}_{:.2f}_{:d}_{:d}.npz".format(
-                act_sha256,
-                det_sha256,
-                pos_sha256,
-                target_framerate,
-                self.window_size,
-                self.feature_version,
-            )
+            cache_filename = "{}.npz".format(csum.hexdigest())
             cache_filepath = Path(cache_dir) / cache_filename
             has_vector_cache = cache_filepath.is_file()
 
@@ -424,7 +400,7 @@ class TCNDataset(Dataset):
                 logger.info("Loading window vectors from cache... Done")
             else:
                 # Pre-vectorize data for iteration efficiency during training.
-                window_vectors: List[npt.NDArray[float]] = []
+                window_vectors: List[npt.NDArray[np.float32]] = []
                 itable = (self._vectorize_window(d) for d in window_data)
                 for one_vector in tqdm(
                     itable,
@@ -448,7 +424,6 @@ class TCNDataset(Dataset):
     def load_data_online(
         self,
         window_data: Sequence[FrameData],
-        det_class_label_vec: Sequence[Optional[str]],
     ) -> None:
         """
         Receive data from a streaming runtime to yield from __getitem__.
@@ -458,12 +433,6 @@ class TCNDataset(Dataset):
 
         Args:
             window_data: Per-frame data to compose the solitary window.
-            det_class_label_vec:
-                Sequence of string labels mapping predicted object detection
-                class label integers into strings. This is generally all
-                categories that the detector may predict, in index order.
-                The background class should be left out as a string in
-                sequence, but instead be represented by a None value.
         """
         # Just load one windows worth of stuff so only __getitem__(0) makes
         # sense.
@@ -472,8 +441,6 @@ class TCNDataset(Dataset):
                 f"Input sequences did not match the configured window size "
                 f"({len(window_data)} != {self.window_size})."
             )
-
-        self._det_label_vec = tuple(det_class_label_vec)
 
         # Assign a single window of frame data.
         self._window_data = [list(window_data)]
@@ -486,7 +453,7 @@ class TCNDataset(Dataset):
     def __getitem__(
         self, index: int
     ) -> Tuple[
-        npt.NDArray[float],
+        npt.NDArray[np.float32],
         npt.NDArray[int],
         npt.NDArray[int],
         npt.NDArray[int],
@@ -549,19 +516,32 @@ if __name__ == "__main__":
 
     # Example usage:
     activity_coco = kwcoco.CocoDataset(
-        "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/TEST-activity_truth.coco.json"
-        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/activity_truth.coco.json"
+        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens/activity_truth.coco.json"
+        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens/TEST-activity_truth.coco.json"
+        "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens/TRAIN-activity_truth-vid_1.coco.json"
     )
     dets_coco = kwcoco.CocoDataset(
-        "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/TEST-object_detections.coco.json"
-        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/all_object_detections.coco.json"
+        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens/all_object_detections.coco.json"
+        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens/TEST-object_detections.coco.json"
+        "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens/TRAIN-object_detections-vid_1.coco.json"
     )
     pose_coco = kwcoco.CocoDataset(
-        "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/TEST-pose_estimates.coco.json"
-        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/all_poses.coco.json"
+        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens/all_poses.coco.json"
+        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens/TEST-pose_estimates.coco.json"
+        "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens/TRAIN-pose_estimates-vid_1.coco.json"
     )
 
-    dataset = TCNDataset(window_size=25, feature_version=6)
+    from tcn_hpl.data.vectorize.classic import Classic
+
+    vectorizer = Classic(
+        feat_version=6,
+        top_k=1,
+        num_classes=7,  # M2 object detection classes
+        background_idx=0,
+        hand_left_idx=5,
+        hand_right_idx=6,
+    )
+    dataset = TCNDataset(window_size=25, vectorizer=vectorizer)
     dataset.load_data_offline(
         activity_coco,
         dets_coco,
@@ -582,7 +562,7 @@ if __name__ == "__main__":
 
     count = 0
     s = time.time()
-    for index, batch in tqdm(
+    for idx, batch in tqdm(
         enumerate(data_loader),
         desc="Iterating batches of features",
         unit="batches",

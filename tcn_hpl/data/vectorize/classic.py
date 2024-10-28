@@ -32,6 +32,8 @@ class Classic(Vectorize):
         hand_left_idx: int = 5,
         hand_right_idx: int = 6,
     ):
+        super().__init__()
+
         self._feat_version = feat_version
         self._top_k = top_k
         # The classic means of vectorization required some inputs that involved
@@ -91,32 +93,35 @@ class Classic(Vectorize):
         if f_poses is not None and f_poses.scores.size:
             best_pose_idx = np.argmax(f_poses.scores)
             pose_kps = [
-                {"xy": joint_pt}
-                for joint_pt in f_poses.joint_positions[best_pose_idx]
+                {"xy": joint_pt} for joint_pt in f_poses.joint_positions[best_pose_idx]
             ]
         else:
             # special value for the classic method to indicate no pose joints.
             pose_kps = zero_joint_offset
 
-        frame_feat = obj_det2d_set_to_feature(
-            label_vec=det_lbls,
-            xs=det_xs,
-            ys=det_ys,
-            ws=det_ws,
-            hs=det_hs,
-            label_confidences=det_scores,
-            pose_keypoints=pose_kps,
-            obj_label_to_ind=obj_label_to_ind,
-            version=self._feat_version,
-            top_k_objects=self._top_k,
-        ).ravel().astype(np.float32)
+        frame_feat = (
+            obj_det2d_set_to_feature(
+                label_vec=det_lbls,
+                xs=det_xs,
+                ys=det_ys,
+                ws=det_ws,
+                hs=det_hs,
+                label_confidences=det_scores,
+                pose_keypoints=pose_kps,
+                obj_label_to_ind=obj_label_to_ind,
+                version=self._feat_version,
+                top_k_objects=self._top_k,
+            )
+            .ravel()
+            .astype(np.float32)
+        )
 
         return frame_feat
 
 
 @functools.lru_cache()
 def _class_labels_to_map(
-    class_labels: tg.Sequence[tg.Optional[str]]
+    class_labels: tg.Sequence[tg.Optional[str]],
 ) -> tg.Dict[str, int]:
     """
     Transform a sequence of class label strings into a mapping from label name
@@ -130,7 +135,7 @@ def _class_labels_to_map(
     min_cat = min(lbl_to_idx.values())
     for k in lbl_to_idx:
         lbl_to_idx[k] -= min_cat
-    assert (
-        set(lbl_to_idx.values()) == set(range(len(lbl_to_idx)))
+    assert set(lbl_to_idx.values()) == set(
+        range(len(lbl_to_idx))
     ), "Resulting category indices must start at 0 and be contiguous."
     return lbl_to_idx
