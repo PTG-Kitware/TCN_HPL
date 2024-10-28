@@ -18,11 +18,17 @@ defaults:
 # all parameters below will be merged with parameters from default configurations set above
 # this allows you to overwrite only specified parameters
 
-# Set this value influences:
+# Change this name to something descriptive and unique for this experiment.
+# This will differentiate the run logs and output to be separate from other
+# experiments that may have been run under the configured
+# Setting this value influences:
 # - the name of the directory under `${paths.root_dir}/logs/` in which training
 #   run files are stored.
 # Default is "train" set in the "configs/train.yaml" file.
 #task_name:
+
+# simply provide checkpoint path to resume training
+#ckpt_path: null
 
 tags: ["m2", "ms_tcn", "debug"]
 
@@ -61,7 +67,14 @@ data:
 
   train_dataset:
     window_size: 25
-    feature_version: 6
+    vectorizer:
+      _target_: tcn_hpl.data.vectorize.classic.Classic
+      feat_version: 6
+      top_k: 1
+      num_classes: 7
+      background_idx: 0
+      hand_left_idx: 5
+      hand_right_idx: 6
     transform:
       transforms: []  # no transforms
 #        - _target_: tcn_hpl.data.components.augmentations.MoveCenterPts
@@ -93,14 +106,14 @@ data:
 
 paths:
   # root_dir: "/data/PTG/medical/training/activity_classifier/TCN_HPL/"
-  root_dir: "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example/training_root"
+  root_dir: "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens/training_root"
 
   # Convenience variable to where your train/val/test split COCO file datasets
   # are stored.
-  coco_file_root: "/home/local/KHQ/paul.tunison/data/darpa-ptg/tcn_training_example"
+  coco_file_root: "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens"
 
 #exp_name: "tcn_training_revive"
 #logger:
 #  aim:
-#    experiment: ${exp_name}
+#    experiment: ${task_name}
 #    capture_terminal_logs: true
