@@ -371,7 +371,11 @@ class TCNDataset(Dataset):
         # windows, which is the truth value for the window as a whole.
         window_final_class_ids = self._window_truth[:, -1]
         cls_ids, cls_counts = np.unique(window_final_class_ids, return_counts=True)
-        cls_weights = 1.0 / cls_counts
+        # Some classes may not be represented in the truth, so initialize the
+        # weights vector separately, and then assign weight values based on
+        # which class IDs were actually represented.
+        cls_weights = np.zeros(len(activity_coco.cats))
+        cls_weights[cls_ids] = 1.0 / cls_counts
         self._window_weights = cls_weights[window_final_class_ids]
 
         # Check if there happens to be a cache file of pre-computed window
@@ -422,9 +426,6 @@ class TCNDataset(Dataset):
                 # Pre-vectorize data for iteration efficiency during training.
                 window_vectors: List[npt.NDArray[float]] = []
                 itable = (self._vectorize_window(d) for d in window_data)
-                # pool = ThreadPoolExecutor()
-                # pool = ProcessPoolExecutor(max_workers=4)
-                # itable = pool.map(self._vectorize_window, window_data)
                 for one_vector in tqdm(
                     itable,
                     desc="Windows vectorized",
