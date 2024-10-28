@@ -2,106 +2,21 @@
 Logic and utilities to perform the vectorization of input data into an
 embedding space used for TCN training and prediction.
 """
-import functools
-from dataclasses import dataclass
 import typing as tg
 
 import numpy as np
 import numpy.typing as npt
-from jedi.plugins.stdlib import functools_partial
 
+from tcn_hpl.data.vectorize import (
+    FrameObjectDetections,
+    FramePoses,
+    FrameData,
+)
+from tcn_hpl.data.vectorize.classic import _class_labels_to_map  # noqa
 from tcn_hpl.data.vectorize_classic import (
     obj_det2d_set_to_feature,
     zero_joint_offset,
 )
-
-
-@dataclass
-class FrameObjectDetections:
-    """
-    Representation of object detection predictions for a single image.
-    All sequences should be the same length.
-    """
-
-    # Detection 2D bounding boxes in xywh format for the left, top, width and
-    # height measurements respectively. Shape: (num_detections, 4)
-    boxes: npt.NDArray[float]
-    # Object category ID of the most confident class. Shape: (num_detections,)
-    labels: npt.NDArray[int]
-    # Vectorized detection confidence value of the most confidence class.
-    # Shape: (num_detections,)
-    scores: npt.NDArray[float]
-
-    def __post_init__(self):
-        assert self.boxes.ndim == 2
-        assert self.labels.ndim == 1
-        assert self.scores.ndim == 1
-        assert self.boxes.shape[0] == self.labels.shape[0]
-        assert self.boxes.shape[0] == self.scores.shape[0]
-        assert self.boxes.shape[1] == 4
-
-    def __bool__(self):
-        return bool(self.boxes.size)
-
-
-@dataclass
-class FramePoses:
-    """
-    Represents pose estimations for a single image.
-
-    We currently assume that all poses will be composed of the same number of
-    keypoints.
-    """
-
-    # Array of scores for each pose. Ostensibly the bbox score. Shape: (num_poses,)
-    scores: npt.NDArray[float]
-    # Pose join 2D positions in ascending joint ID order. If the joint is not
-    # present, 0s are used. Shape: (num_poses, num_joints, 2)
-    joint_positions: npt.NDArray[float]
-    # Poise joint scores. Shape: (num_poses, num_joints)
-    joint_scores: npt.NDArray[float]
-
-    def __post_init__(self):
-        assert self.scores.ndim == 1
-        assert self.joint_positions.ndim == 3
-        assert self.joint_scores.ndim == 2
-        assert self.scores.shape[0] == self.joint_positions.shape[0]
-        assert self.scores.shape[0] == self.joint_scores.shape[0]
-        assert self.joint_positions.shape[1] == self.joint_scores.shape[1]
-
-    def __bool__(self):
-        return bool(self.scores.size)
-
-
-@dataclass
-class FrameData:
-    object_detections: tg.Optional[FrameObjectDetections]
-    poses: tg.Optional[FramePoses]
-
-    def __bool__(self):
-        return bool(self.object_detections) or bool(self.poses)
-
-
-@functools.lru_cache()
-def _class_labels_to_map(
-    class_labels: tg.Sequence[tg.Optional[str]]
-) -> tg.Dict[str, int]:
-    """
-    Transform a sequence of class label strings into a mapping from label name
-    to index.
-
-    The output mapping will map labels to 0-based indices based on the order of
-    the labels provided.
-    """
-    lbl_to_idx = {lbl: i for i, lbl in enumerate(class_labels) if lbl is not None}
-    # Determine min index to subtract.
-    min_cat = min(lbl_to_idx.values())
-    for k in lbl_to_idx:
-        lbl_to_idx[k] -= min_cat
-    assert (
-        set(lbl_to_idx.values()) == set(range(len(lbl_to_idx)))
-    ), "Resulting category indices must start at 0 and be contiguous."
-    return lbl_to_idx
 
 
 def vectorize_window(

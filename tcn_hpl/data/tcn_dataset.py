@@ -18,7 +18,7 @@ import torch
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
-from tcn_hpl.data.vectorize import (
+from tcn_hpl.data.vectorize_window import (
     FrameData,
     FrameObjectDetections,
     FramePoses,

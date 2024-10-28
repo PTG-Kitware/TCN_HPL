@@ -27,6 +27,9 @@ zero_joint_offset = [0 for i in range(22)]
 random_colors = list(mcolors.CSS4_COLORS.keys())
 random.shuffle(random_colors)
 
+HAND_STR_LEFT = "hand (left)"
+HAND_STR_RIGHT = "hand (right)"
+
 
 def tlbr_to_xywh(
     top: npt.ArrayLike,
@@ -814,12 +817,12 @@ def obj_det2d_set_to_feature_by_method(
     #########################
     # Find the right hand
     (right_hand_idx, right_hand_bbox, right_hand_conf, right_hand_center) = find_hand(
-        "hand (right)"
+        HAND_STR_RIGHT
     )
 
     # Find the left hand
     (left_hand_idx, left_hand_bbox, left_hand_conf, left_hand_center) = find_hand(
-        "hand (left)"
+        HAND_STR_LEFT
     )
 
     right_left_hand_kwboxes = det_class_kwboxes[0, [right_hand_idx, left_hand_idx]]
