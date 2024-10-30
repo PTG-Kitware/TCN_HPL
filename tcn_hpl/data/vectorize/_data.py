@@ -70,8 +70,39 @@ class FramePoses:
 
 @dataclass
 class FrameData:
+    """
+    Structure composing information and correlated analytic results for a
+    single image frame.
+    """
+
+    # Object detection results for this frame.
+    # This may contain an instance with empty (zero-sized) component vectors,
+    # which implies that an object detection analytic was run on this frame but
+    # did not predict any objects.
+    # This may be None, which implies that an object detection analytic was not
+    # run for this frame.
     object_detections: tg.Optional[FrameObjectDetections]
+
+    # Pose estimation results for this frame.
+    # This may contain an instance with empty (zero-sized) component vectors,
+    # which implies that a pose estimation analytic was run on this frame but
+    # did not predict any poses.
+    # This may be None, which implies that an object pose estimation was not
+    # run for this frame.
     poses: tg.Optional[FramePoses]
 
     def __bool__(self):
+        """
+        Get if this frame contains analytic results or not.
+
+        This frame data instance is "False" if there are no analytic results
+        for this frame, and "True" if there is any analytic results (but
+        possibly not both).
+        Having "no analytic results" is defined as either the slot being `None`
+        valued or if the component results evaluates as False itself (see the
+        bool logic for the component dataclass).
+
+        :return: True if this frame has any analytic results, False if it does
+            not.
+        """
         return bool(self.object_detections) or bool(self.poses)
