@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-
+from concurrent.futures import ThreadPoolExecutor
 import dataclasses
 import os
 from pathlib import Path
@@ -30,11 +30,22 @@ RE_BBN_TRUTH_LINE = re.compile(
 
 @dataclasses.dataclass
 class VideoInfo:
+    # Path to the BBN Truth file associated with this video
     truth_file: Path
+
+    # Path to the source MP4 video file
     mp4_file: Path
+
+    # Directory path into which frame image files have been / are to be written
     frames_dir: Path = dataclasses.field(init=False)
+
+    # Total number of frames extracted/extractable from this video
     num_frames: int = dataclasses.field(init=False)
+
+    # Frames per second (Hz) of this video
     fps: float = dataclasses.field(init=False)
+
+    # Frame size in (h, w) format
     frame_size: typing.Tuple[int, int] = dataclasses.field(init=False)
 
 
@@ -66,20 +77,27 @@ def extract_bbn_video_frames(
     # quantity of frames in the video, we assume that this is already done.
     # Otherwise, progress for each frame, writing out the frame file if it does
     # not already exist in the directory.
+    # * Including parent directory name in description to be more contextually
+    #   informative
     if (
         not output_directory.is_dir()
         or len(list(output_directory.iterdir())) != num_frames
     ):
         output_directory.mkdir(exist_ok=True)
+        report_name = f"{video_path.parent.name}/{video_path.name}"
         for i in tqdm(
             range(int(num_frames)),
-            desc=f"Extracting frames from {video_path.name}",
+            # desc=f"Extracting frames from {video_path.name}",
+            desc=f"Extracting frames from {report_name}",
             unit="frame",
         ):
             ret, frame = video.read()
             frame_filepath = output_directory / f"{i:05d}.png"
             if not frame_filepath.is_file():
-                cv2.imwrite(frame_filepath.as_posix(), frame)
+                # Safely write to a temp and then atomically (on unix) rename.
+                tmp_filepath = output_directory / f".{i:05d}-PENDING.png"
+                cv2.imwrite(tmp_filepath.as_posix(), frame)
+                tmp_filepath.rename(frame_filepath)
 
     return num_frames, fps, (frame_h, frame_w)
 
@@ -145,7 +163,8 @@ def convert_truth_to_array(
     return activity_gt
 
 
-@click.command(context_settings={"help_option_names": ["-h", "--help"]})
+@click.command()
+@click.help_option("-h", "--help")
 @click.argument(
     "bbn_truth_root",
     type=click.Path(
@@ -176,12 +195,23 @@ def convert_truth_to_array(
         "truth root directory and working directory, respecively."
     ),
 )
+@click.option(
+    "--cores-extraction",
+    type=int,
+    default=8,
+    show_default=True,
+    help=(
+        "Level of parallelization to extract videos with. We will extract "
+        "frames for this many videos at the same time."
+    ),
+)
 def create_truth_coco(
     bbn_truth_root: Path,
     working_directory: Path,
     activity_label_config: Path,
     output_coco_filepath: Path,
     relative: bool,
+    cores_extraction: int,
 ) -> None:
     """
     Extract the component frames aof a directory of MP4 videos that have an
@@ -242,21 +272,35 @@ def create_truth_coco(
 
     ordered_vi_keys = sorted(video_info)
 
+    #
     # Pre-process video files into directories of frames.
-    # TODO: Could use thread-pool and submit a job per video.
-    for vi_key in tqdm(
-        ordered_vi_keys,
-        desc="Extracting frames from videos",
-        unit="videos",
-    ):
-        vi = video_info[vi_key]
-        frames_output_directory = working_directory / vi.mp4_file.relative_to(
-            bbn_truth_root
-        ).with_suffix(".frames")
-        vi.frames_dir = frames_output_directory
-        vi.num_frames, vi.fps, vi.frame_size = extract_bbn_video_frames(
-            vi.mp4_file, frames_output_directory
+    #
+    # ordered mp4 filenames
+    ordered_vi_mp4_filenames = [video_info[vi_key].mp4_file for vi_key in ordered_vi_keys]
+    # output directories per video
+    ordered_vi_output_dirs = [
+        working_directory / vi_mp4_path.relative_to(bbn_truth_root).with_suffix(".frames")
+        for vi_mp4_path in ordered_vi_mp4_filenames
+    ]
+    # Specifically using ThreadPoolExecutor so tqdm shows progress bars
+    # separately for each task.
+    with ThreadPoolExecutor(max_workers=cores_extraction) as pool:
+        results = pool.map(
+            extract_bbn_video_frames,
+            ordered_vi_mp4_filenames,
+            ordered_vi_output_dirs
         )
+        for vi_key, outdir_path, (num_frames, fps, frame_hw) in tqdm(
+            zip(ordered_vi_keys, ordered_vi_output_dirs, results),
+            desc="Integrating video frame extraction results",
+            total=len(ordered_vi_keys),
+            unit="videos",
+        ):
+            vi = video_info[vi_key]
+            vi.frames_dir = outdir_path
+            vi.num_frames = num_frames
+            vi.fps = fps
+            vi.frame_size = frame_hw
 
     # Home for our video, image and per-frame truth annotations.
     truth_ds = kwcoco.CocoDataset(img_root=working_directory.as_posix())
