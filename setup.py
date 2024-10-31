@@ -17,6 +17,7 @@ setup(
             "train_command = tcn_hpl.train:main",
             "eval_command = tcn_hpl.eval:main",
             "bbn_create_truth_coco = tcn_hpl.data.utils.bbn:create_truth_coco",
+            "kwcoco_guided_subset = tcn_hpl.data.utils.kwcoco_guided_subset:main",
         ]
     },
 )
