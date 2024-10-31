@@ -1,3 +1,4 @@
+import click
 import logging
 import os
 from hashlib import sha256
@@ -16,7 +17,7 @@ from typing import Union
 import kwcoco
 import numpy as np
 import numpy.typing as npt
-import torch
+import torch.multiprocessing
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
@@ -415,6 +416,8 @@ class TCNDataset(Dataset):
                 csum.update(f.read())
             csum.update(f"{target_framerate:0.{framerate_round_decimals}f}".encode())
             csum.update(f"{self.window_size:d}".encode())
+            csum.update(self.vectorizer.__class__.__module__.encode())
+            csum.update(self.vectorizer.__class__.__name__.encode())
             csum.update(json.dumps(self.vectorizer.hparams()).encode())
             # Include vectorization variables in the name of the file.
             # Note the "z" in the name, expecting to use savez_compressed.
@@ -432,31 +435,42 @@ class TCNDataset(Dataset):
                 # Pre-vectorize data for iteration efficiency during training.
                 # * Creating a mini Dataset/Dataloader situation to efficiently
                 #   generate vectors.
-                frame_vectors: List[npt.NDArray[np.float32]] = []
-                vectorizer = self.vectorizer
 
-                class VecDset(Dataset):
-                    def __getitem__(self, item):
-                        return vectorizer(frame_data[item])
+                # Set the sharing strategy to filesystem for the duration of
+                # this operation, and then restoring the existing strategy
+                # after we're done.
+                current_sharing_strategy = torch.multiprocessing.get_sharing_strategy()
 
-                    def __len__(self):
-                        return len(frame_data)
+                try:
+                    # This iteration seems to go twice as fast when utilizing
+                    # the file-system strategy.
+                    torch.multiprocessing.set_sharing_strategy("file_system")
 
-                # Using larger batch sizes than 1 did not show any particular
-                # increase in throughput. This may require increasing
-                # `ulimit -n`, though.
-                dloader = DataLoader(
-                    VecDset(),
-                    batch_size=1,
-                    num_workers=pre_vectorize_cores,
-                )
+                    vec_dset = _VectorizationDataset(self.vectorizer, frame_data)
 
-                for batch in tqdm(
-                    dloader,
-                    desc="Frame data vectorized",
-                    unit="frames",
-                ):
-                    frame_vectors.extend(batch.numpy())
+                    # Using larger batch sizes than 1 did not show any particular
+                    # increase in throughput. This may require increasing
+                    # `ulimit -n`, though.
+                    dloader = DataLoader(
+                        vec_dset,
+                        batch_size=1,
+                        num_workers=pre_vectorize_cores,
+                        # Required, especially for large dataset sizes, so the
+                        # dataloader multiprocessing iteration does not exhaust
+                        # shared memory.
+                        pin_memory=True,
+                    )
+
+                    frame_vectors: List[npt.NDArray[np.float32]] = []
+                    for batch in tqdm(
+                        dloader,
+                        desc="Frame data vectorized",
+                        unit="frames",
+                    ):
+                        frame_vectors.extend(batch.numpy())
+                finally:
+                    torch.multiprocessing.set_sharing_strategy(current_sharing_strategy)
+
                 self._frame_vectors = np.asarray(frame_vectors)
 
                 if cache_filepath is not None:
@@ -564,73 +578,117 @@ class TCNDataset(Dataset):
         Returns:
             length: Length of the dataset.
         """
-        return len(self._window_data_idx)
+        return len(self._window_data_idx) if self._window_data_idx is not None else 0
 
 
-if __name__ == "__main__":
+class _VectorizationDataset(Dataset):
+    """
+    Helper dataset for iterating over individual frames of data and producing
+    embedding vectors.
+    """
+
+    def __init__(self, vectorize: Vectorize, frame_data: Sequence[FrameData]):
+        self.vectorize = vectorize
+        self.frame_data = frame_data
+
+    def __len__(self):
+        return len(self.frame_data)
+
+    def __getitem__(self, item):
+        return self.vectorize(self.frame_data[item])
+
+
+@click.command()
+@click.help_option("-h", "--help")
+@click.argument("activity_coco", type=click.Path(path_type=Path))
+@click.argument("detections_coco", type=click.Path(path_type=Path))
+@click.argument("pose_coco", type=click.Path(path_type=Path))
+@click.option(
+    "--window-size",
+    type=int,
+    default=25,
+    show_default=True,
+)
+@click.option(
+    "--target-framerate",
+    type=float,
+    default=15,
+    show_default=True,
+)
+@click.option(
+    "--pre-vectorize",
+    is_flag=True,
+    help="Run pre-vectorization or not.",
+    show_default=True,
+)
+def test_dataset_for_input(
+    activity_coco: Path,
+    detections_coco: Path,
+    pose_coco: Path,
+    window_size: int,
+    target_framerate: float,
+    pre_vectorize: bool,
+):
+    """
+    Test the TCN Dataset iteration over some test data.
+    """
     logging.basicConfig(level=logging.INFO)
 
-    # Example usage:
-    activity_coco = kwcoco.CocoDataset(
-        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens/activity_truth.coco.json"
-        "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens/TEST-activity_truth.coco.json"
-    )
-    dets_coco = kwcoco.CocoDataset(
-        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens/all_object_detections.coco.json"
-        "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens/TEST-object_detections.coco.json"
-    )
-    pose_coco = kwcoco.CocoDataset(
-        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens/all_poses.coco.json"
-        "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens/TEST-pose_estimates.coco.json"
-    )
+    activity_coco = kwcoco.CocoDataset(activity_coco)
+    dets_coco = kwcoco.CocoDataset(detections_coco)
+    pose_coco = kwcoco.CocoDataset(pose_coco)
 
+    # TODO: Some method of configuring which vectorizer to use.
     from tcn_hpl.data.vectorize.classic import Classic
-
     vectorizer = Classic(
         feat_version=6,
         top_k=1,
-        # M2-specific object detection class indices
+        # M2/R18 object detection class indices
         num_classes=7,
         background_idx=0,
         hand_left_idx=5,
         hand_right_idx=6,
     )
-    dataset = TCNDataset(window_size=25, vectorizer=vectorizer)
+
+    dataset = TCNDataset(window_size=window_size, vectorizer=vectorizer)
     dataset.load_data_offline(
         activity_coco,
         dets_coco,
         pose_coco,
-        target_framerate=15,
-        cache_dir="./test_cache",
+        target_framerate=target_framerate,
+        pre_vectorize=pre_vectorize,
     )
 
-    print(f"dataset: {len(dataset)}")
+    logger.info(f"Number of windows: {len(dataset)}")
+
+    # Get vector dimensionality
+    window_vecs = dataset[0]
+    logger.info(f"Feature vector dims: {window_vecs[0].shape[1]}")
+
+    # Test that we can iterate over the dataset using a DataLoader with
+    # shuffling.
     batch_size = 512  # 16
-    data_loader = torch.utils.data.DataLoader(
+    data_loader = DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=16,
+        num_workers=os.cpu_count(),
         pin_memory=True,
     )
-
     count = 0
     s = time.time()
-    for idx, batch in tqdm(
-        enumerate(data_loader),
+    for batch in tqdm(
+        data_loader,
         desc="Iterating batches of features",
         unit="batches",
     ):
         count += 1
     duration = time.time() - s
-
-    print(
-        f"Total batches of size {batch_size}: {count} ({duration:.02f} seconds total)"
-    )
+    logger.info(f"Iterated over the full TCN Dataset in {duration:.2f} s.")
 
     # Test creating online mode with subset of data from above.
-    dset_online = TCNDataset(window_size=25, vectorizer=vectorizer)
-    dset_online.load_data_online(dataset._frame_data[:25])  # noqa
+    dset_online = TCNDataset(window_size=window_size, vectorizer=vectorizer)
+    dset_online.load_data_online(dataset._frame_data[:window_size])  # noqa
     assert len(dset_online) == 1, "Online dataset should be size 1"
     _ = dset_online[0]
     failed_index_error = True
@@ -643,3 +701,7 @@ if __name__ == "__main__":
     assert (
         (dataset[0][0] == dset_online[0][0]).all()  # noqa
     ), "Online should have produced same window matrix as offline version."
+
+
+if __name__ == "__main__":
+    test_dataset_for_input()
