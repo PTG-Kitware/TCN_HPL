@@ -2,9 +2,9 @@
 
 # to execute this experiment run:
 # python train.py experiment=example
-task: "m2"
-feature_version: 6
 topic: "medical"
+task: "r18"
+feature_version: 6
 
 defaults:
   - override /data: ptg
@@ -27,10 +27,7 @@ defaults:
 # Default is "train" set in the "configs/train.yaml" file.
 #task_name:
 
-# simply provide checkpoint path to resume training
-#ckpt_path: null
-
-tags: ["m2", "ms_tcn", "debug"]
+tags: ["r18", "ms_tcn", "debug"]
 
 seed: 12345
 
@@ -40,32 +37,31 @@ trainer:
   log_every_n_steps: 1
 
 model:
-  num_classes: 9  # number of activity classification classes
+  num_classes: 6  # number of activity classification classes
   compile: false
   net:
     # Length of feature vector for a single frame.
     # Currently derived from the parameterization of dataset vectorizer.
     dim: 297
 
+# TRAINING
 data:
   coco_train_activities: "${paths.coco_file_root}/TRAIN-activity_truth.coco.json"
   coco_train_objects: "${paths.coco_file_root}/TRAIN-object_detections.coco.json"
-  coco_train_poses: "${paths.coco_file_root}/TRAIN-pose_estimates.coco.json"
+  coco_train_poses: "${paths.coco_file_root}/TRAIN-pose_estimations.coco.json"
 
   coco_validation_activities: "${paths.coco_file_root}/VALIDATION-activity_truth.coco.json"
   coco_validation_objects: "${paths.coco_file_root}/VALIDATION-object_detections.coco.json"
-  coco_validation_poses: "${paths.coco_file_root}/VALIDATION-pose_estimates.coco.json"
+  coco_validation_poses: "${paths.coco_file_root}/VALIDATION-pose_estimations.coco.json"
 
   coco_test_activities: "${paths.coco_file_root}/TEST-activity_truth.coco.json"
   coco_test_objects: "${paths.coco_file_root}/TEST-object_detections.coco.json"
-  coco_test_poses: "${paths.coco_file_root}/TEST-pose_estimates.coco.json"
+  coco_test_poses: "${paths.coco_file_root}/TEST-pose_estimations.coco.json"
 
-  # batch_size: 512
-  # batch_size: 8192
   batch_size: 16384
   num_workers: 16
   target_framerate: 15  # BBN Hololens2 Framerate
-  epoch_length: 200000
+  epoch_length: 80000
 
   train_dataset:
     window_size: 25
@@ -108,11 +104,11 @@ data:
 
 paths:
   # root_dir: "/data/PTG/medical/training/activity_classifier/TCN_HPL/"
-  root_dir: "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens"
+  root_dir: "/data/paul.tunison/data/darpa-ptg/train-TCN-R18_bbn_hololens-yolo_v7-mmpose"
 
   # Convenience variable to where your train/val/test split COCO file datasets
   # are stored.
-  coco_file_root: "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens"
+  coco_file_root: ${paths.root_dir}
 
 #logger:
 #  aim:
