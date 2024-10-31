@@ -142,8 +142,7 @@ class PTGDataModule(LightningDataModule):
         # this line allows to access init params with 'self.hparams' attribute
         # also ensures init params will be stored in ckpt
         self.save_hyperparameters(
-            logger=False,
-            ignore=["train_dataset", "val_dataset", "test_dataset"]
+            logger=False, ignore=["train_dataset", "val_dataset", "test_dataset"]
         )
 
         self.data_train: Optional[TCNDataset] = train_dataset
