@@ -40,12 +40,12 @@ trainer:
   log_every_n_steps: 1
 
 model:
+  num_classes: 9  # number of activity classification classes
   compile: false
   net:
     # Length of feature vector for a single frame.
-    # Currently derived from feature version and other hyperparameters.
+    # Currently derived from the parameterization of dataset vectorizer.
     dim: 297
-  num_classes: 9
 
 data:
   coco_train_activities: "${paths.coco_file_root}/TRAIN-activity_truth.coco.json"
@@ -60,10 +60,12 @@ data:
   coco_test_objects: "${paths.coco_file_root}/TEST-object_detections.coco.json"
   coco_test_poses: "${paths.coco_file_root}/TEST-pose_estimates.coco.json"
 
-  batch_size: 512
+  # batch_size: 512
+  # batch_size: 8192
+  batch_size: 16384
   num_workers: 16
   target_framerate: 15  # BBN Hololens2 Framerate
-  epoch_length: 20000
+  epoch_length: 200000
 
   train_dataset:
     window_size: 25
@@ -106,13 +108,12 @@ data:
 
 paths:
   # root_dir: "/data/PTG/medical/training/activity_classifier/TCN_HPL/"
-  root_dir: "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens/training_root"
+  root_dir: "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens"
 
   # Convenience variable to where your train/val/test split COCO file datasets
   # are stored.
   coco_file_root: "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens"
 
-#exp_name: "tcn_training_revive"
 #logger:
 #  aim:
 #    experiment: ${task_name}
