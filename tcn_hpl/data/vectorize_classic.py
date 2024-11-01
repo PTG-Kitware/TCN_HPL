@@ -1,3 +1,7 @@
+"""
+This file is a straight port of what previously was in angel_system/tcn_hpl/...
+The content here is being left as is to maintain previous behaviors.
+"""
 import os
 
 from typing import Dict, Tuple, List

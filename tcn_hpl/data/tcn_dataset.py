@@ -75,9 +75,14 @@ class TCNDataset(Dataset):
         # size for easy batching.
         # For online mode, expect only one window to be set at a time via the
         # `load_data_online` method.
-        # Content to be indexed into during __getitem__.
-        # This cannot be stored as a ndarray due to its variable nature.
-        self._window_data: List[List[FrameData]] = []
+
+        # FrameData for the total set of frames.
+        # This is not being stored as a ndarray due to its variable nature.
+        self._frame_data: List[FrameData] = []
+        # Content to be indexed into during __getitem__ that refers to which
+        # indices of self._frame_data compose that window index.
+        # Shape: (n_windows, window_size)
+        self._window_data_idx: Optional[npt.NDArray[int]] = None
         # The truth labels per-frame per-window.
         # Shape: (n_windows, window_size)
         self._window_truth: Optional[npt.NDArray[int]] = None
@@ -90,10 +95,13 @@ class TCNDataset(Dataset):
         self._window_frames: Optional[npt.NDArray[int]] = None
         # Optionally calculated weight to apply to a window. This is to support
         # weighted random sampling during training. This should only be
-        # available when there is truth avaialble, i.e. during offline mode.
+        # available when there is truth available, i.e. during offline mode.
         self._window_weights: Optional[npt.NDArray[float]] = None
-        # Optionally defined set of pre-computed window vectors.
-        self._window_vectors: Optional[npt.NDArray[float]] = None
+        # Optionally defined set of pre-computed vectors for each frame.
+        # Congruent index association with self._frame_data, so
+        # self._window_data_idx values may be used here.
+        # Shape: (n_frames, feat_dim)  # see self._frame_data
+        self._frame_vectors: Optional[npt.NDArray[np.float32]] = None
 
         # Constant 1's mask value to re-use during get-item.
         self._ones_mask: npt.NDArray[int] = np.ones(window_size, dtype=int)
@@ -109,23 +117,6 @@ class TCNDataset(Dataset):
         if self._window_weights is None:
             raise RuntimeError("No class weights calculated for this dataset.")
         return self._window_weights
-
-    def _vectorize_window(
-        self, window_data: Sequence[FrameData]
-    ) -> npt.NDArray[np.float32]:
-        """
-        Vectorize a single window of data.
-
-        Args:
-            window_data: Window of data to vectorize. Must be window-size
-                in length.
-
-        Returns:
-            Transformed vector.
-        """
-        assert len(window_data) == self.window_size
-        v = self.vectorizer
-        return np.asarray([v(d) for d in window_data])
 
     def load_data_offline(
         self,
@@ -252,17 +243,26 @@ class TCNDataset(Dataset):
         # Collect per-frame data first per-video, then slice into windows.
         #
 
-        # Windows of per-frame data that would go into producing a vector.
-        window_data: List[List[FrameData]] = []
+        # FrameData instances for each frame of each video. Each entry here
+        # would ostensibly be transformed into a vector.
+        frame_data: List[FrameData] = []
+
+        # Windows specifying which frames are a part of that window via index
+        # reference into frame_data.
+        # Shape: (n_windows, window_size)
+        window_data_idx: List[List[int]] = []
 
         # Activity classification truth labels per-frame per-window.
+        # Shape: (n_windows, window_size)
         window_truth: List[List[int]] = []
 
         # Video ID represented per window. Only one video should be represented
         # in any one window.
+        # Shape: (n_windows,)
         window_vid: List[int] = []
 
         # Image ID per-frame per-window.
+        # Shape: (n_windows, window_size)
         window_frames: List[List[int]] = []
 
         # cache frequently called module functions
@@ -273,7 +273,8 @@ class TCNDataset(Dataset):
             vid_images = activity_coco.images(video_id=vid_id)
             vid_img_ids: List[int] = list(vid_images)
             vid_frames_all: List[int] = vid_images.lookup("frame_index")  # noqa
-            # Iterate over sub-videos if applicable. See comment earlier in func.
+            # Iterate over sub-videos if applicable. This should only turn out
+            # to be some integer >= 1. See comment earlier in func.
             vid_fr_multiple = vid_id_to_fr_multiple[vid_id]
             for starting_idx in range(vid_fr_multiple):  # may just be a single [0]
                 # video-local storage to keep things separate, will extend main
@@ -336,26 +337,42 @@ class TCNDataset(Dataset):
                         frame_poses = empty_pose
                     vid_frame_data.append(FrameData(frame_dets, frame_poses))
 
+                # Compose a list of indices into frame_data that this video's
+                # worth of content resides.
+                vid_frame_data_idx: List[int] = list(
+                    range(
+                        len(frame_data),
+                        len(frame_data) + len(vid_frame_data),
+                    )
+                )
+                frame_data.extend(vid_frame_data)
+
                 # Slide this video's worth of frame data into windows such that
                 # each window is window_size long.
                 # If this video has fewer frames than window_size, this video
                 # effectively be skipped.
-                vid_window_truth = []
-                vid_window_data = []
-                vid_window_vid = []  # just a single ID per window referencing video
-                vid_window_frames = []  # Video frame numbers for frames of this window
+                vid_window_truth: List[List[int]] = []
+                vid_window_data_idx: List[List[int]] = []
+                # just a single ID per window referencing the video that window
+                # is pertaining to.
+                vid_window_vid: List[int] = []
+                # Video frame numbers for frames in windows.
+                vid_window_frames = []
                 for i in range(len(vid_frame_data) - self.window_size):
                     vid_window_truth.append(vid_frame_truth[i : i + self.window_size])
-                    vid_window_data.append(vid_frame_data[i : i + self.window_size])
+                    vid_window_data_idx.append(
+                        vid_frame_data_idx[i : i + self.window_size]
+                    )
                     vid_window_vid.append(vid_id)
                     vid_window_frames.append(vid_frames[i : i + self.window_size])
 
                 window_truth.extend(vid_window_truth)
-                window_data.extend(vid_window_data)
+                window_data_idx.extend(vid_window_data_idx)
                 window_vid.extend(vid_window_vid)
                 window_frames.extend(vid_window_frames)
 
-        self._window_data = window_data
+        self._frame_data = frame_data
+        self._window_data_idx = np.asarray(window_data_idx)
         self._window_truth = np.asarray(window_truth)
         self._window_vid = np.asarray(window_vid)
         self._window_frames = np.asarray(window_frames)
@@ -407,23 +424,23 @@ class TCNDataset(Dataset):
 
         if pre_vectorize:
             if has_vector_cache:
-                logger.info("Loading window vectors from cache...")
+                logger.info("Loading frame vectors from cache...")
                 with np.load(cache_filepath) as data:
-                    self._window_vectors = data["window_vectors"]
-                logger.info("Loading window vectors from cache... Done")
+                    self._frame_vectors = data["frame_vectors"]
+                logger.info("Loading frame vectors from cache... Done")
             else:
                 # Pre-vectorize data for iteration efficiency during training.
                 # * Creating a mini Dataset/Dataloader situation to efficiently
                 #   generate vectors.
-                vectorize_window = self._vectorize_window
-                window_vectors: List[npt.NDArray[np.float32]] = []
+                frame_vectors: List[npt.NDArray[np.float32]] = []
+                vectorizer = self.vectorizer
 
                 class VecDset(Dataset):
                     def __getitem__(self, item):
-                        return vectorize_window(window_data[item])
+                        return vectorizer(frame_data[item])
 
                     def __len__(self):
-                        return len(window_data)
+                        return len(frame_data)
 
                 # Using larger batch sizes than 1 did not show any particular
                 # increase in throughput. This may require increasing
@@ -436,18 +453,18 @@ class TCNDataset(Dataset):
 
                 for batch in tqdm(
                     dloader,
-                    desc="Windows vectorized",
-                    unit="windows",
+                    desc="Frame data vectorized",
+                    unit="frames",
                 ):
-                    window_vectors.extend(batch.numpy())
-                self._window_vectors = window_vectors
+                    frame_vectors.extend(batch.numpy())
+                self._frame_vectors = np.asarray(frame_vectors)
 
                 if cache_filepath is not None:
                     logger.info("Saving window vectors to cache...")
                     cache_filepath.parent.mkdir(parents=True, exist_ok=True)
                     np.savez_compressed(
                         cache_filepath,
-                        window_vectors=window_vectors,
+                        frame_vectors=frame_vectors,
                     )
                     logger.info("Saving window vectors to cache... Done")
 
@@ -471,14 +488,17 @@ class TCNDataset(Dataset):
                 f"Input sequences did not match the configured window size "
                 f"({len(window_data)} != {self.window_size})."
             )
+        window_size = self.window_size
 
         # Assign a single window of frame data.
-        self._window_data = [list(window_data)]
+        self._frame_data = list(window_data)
+        # Make sure it has shape of (1, window_size) with the reshape.
+        self._window_data_idx = np.arange(window_size, dtype=int).reshape(1, -1)
         # The following are undefined for online mode, so we're just filling in
         # 0's enough to match size/shape requirements.
-        self._window_truth = np.zeros(shape=(1, self.window_size), dtype=int)
+        self._window_truth = np.zeros(shape=(1, window_size), dtype=int)
         self._window_vid = np.asarray([0])
-        self._window_frames = np.asarray([list(range(self.window_size))])
+        self._window_frames = self._window_data_idx
 
     def __getitem__(
         self, index: int
@@ -503,16 +523,20 @@ class TCNDataset(Dataset):
               * per-frame video ID, shape: (window_size,)
               * per-frame image ID, shape: (window_size,)
         """
-        window_data = self._window_data[index]
+        frame_data = self._frame_data
+        window_data_idx = self._window_data_idx[index]
         window_truth = self._window_truth[index]
         window_vid = self._window_vid[index]
         window_frames = self._window_frames[index]
 
-        window_vectors = self._window_vectors
-        if window_vectors is not None:
-            tcn_vector = window_vectors[index]
+        frame_vectors = self._frame_vectors
+        if frame_vectors is not None:
+            window_mat = frame_vectors[window_data_idx]
         else:
-            tcn_vector = self._vectorize_window(window_data)
+            vectorizer = self.vectorizer
+            window_mat = np.asarray(
+                [vectorizer(frame_data[idx]) for idx in window_data_idx]
+            )
 
         # Augmentation has to happen on the fly and cannot be pre-computed due
         # to random aspects that augmentation can be configured to have during
@@ -521,10 +545,10 @@ class TCNDataset(Dataset):
             # TODO: Augment using a helper on the vectorizer? I'm imaging that
             #       augmentations might be specific to which vectorizer is
             #       used.
-            tcn_vector = self.transform(tcn_vector)
+            window_mat = self.transform(window_mat)
 
         return (
-            tcn_vector,
+            window_mat,
             window_truth,
             # Under the current operation of this dataset, the mask should always
             # consist of 1's. This may be removed in the future.
@@ -540,7 +564,7 @@ class TCNDataset(Dataset):
         Returns:
             length: Length of the dataset.
         """
-        return len(self._window_data)
+        return len(self._window_data_idx)
 
 
 if __name__ == "__main__":
@@ -550,17 +574,14 @@ if __name__ == "__main__":
     activity_coco = kwcoco.CocoDataset(
         # "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens/activity_truth.coco.json"
         "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens/TEST-activity_truth.coco.json"
-        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens/TRAIN-activity_truth-vid_1.coco.json"
     )
     dets_coco = kwcoco.CocoDataset(
         # "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens/all_object_detections.coco.json"
         "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens/TEST-object_detections.coco.json"
-        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens/TRAIN-object_detections-vid_1.coco.json"
     )
     pose_coco = kwcoco.CocoDataset(
         # "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens/all_poses.coco.json"
         "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens/TEST-pose_estimates.coco.json"
-        # "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens/TRAIN-pose_estimates-vid_1.coco.json"
     )
 
     from tcn_hpl.data.vectorize.classic import Classic
@@ -568,14 +589,19 @@ if __name__ == "__main__":
     vectorizer = Classic(
         feat_version=6,
         top_k=1,
-        num_classes=7,  # M2 object detection classes
+        # M2-specific object detection class indices
+        num_classes=7,
         background_idx=0,
         hand_left_idx=5,
         hand_right_idx=6,
     )
     dataset = TCNDataset(window_size=25, vectorizer=vectorizer)
     dataset.load_data_offline(
-        activity_coco, dets_coco, pose_coco, target_framerate=15, cache_dir=None
+        activity_coco,
+        dets_coco,
+        pose_coco,
+        target_framerate=15,
+        cache_dir="./test_cache",
     )
 
     print(f"dataset: {len(dataset)}")
@@ -601,3 +627,19 @@ if __name__ == "__main__":
     print(
         f"Total batches of size {batch_size}: {count} ({duration:.02f} seconds total)"
     )
+
+    # Test creating online mode with subset of data from above.
+    dset_online = TCNDataset(window_size=25, vectorizer=vectorizer)
+    dset_online.load_data_online(dataset._frame_data[:25])  # noqa
+    assert len(dset_online) == 1, "Online dataset should be size 1"
+    _ = dset_online[0]
+    failed_index_error = True
+    try:
+        # Should index error
+        dset_online[1]
+    except IndexError:
+        failed_index_error = False
+    assert not failed_index_error, "Should have had an index error at [1]"
+    assert (
+        (dataset[0][0] == dset_online[0][0]).all()  # noqa
+    ), "Online should have produced same window matrix as offline version."
