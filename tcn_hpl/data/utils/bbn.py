@@ -83,7 +83,7 @@ def extract_bbn_video_frames(
         not output_directory.is_dir()
         or len(list(output_directory.iterdir())) != num_frames
     ):
-        output_directory.mkdir(exist_ok=True)
+        output_directory.mkdir(exist_ok=True, parents=True)
         report_name = f"{video_path.parent.name}/{video_path.name}"
         for i in tqdm(
             range(int(num_frames)),
@@ -250,7 +250,7 @@ def create_truth_coco(
             ~/dev/darpa-ptg/angel_system/config/activity_labels/medical/m2.yaml \\
             ~/data/darpa-ptg/bbn_data/lab_data-working/m2_tourniquet/positive/3_tourns_122023-activity_truth.json
     """
-    working_directory.mkdir(exist_ok=True)
+    working_directory.mkdir(exist_ok=True, parents=True)
 
     # Discover MP4 and truth text file pairs recursively.
     # video_info's keys should be a type that we can sort to perform actions
