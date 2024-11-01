@@ -83,7 +83,7 @@ def extract_bbn_video_frames(
         not output_directory.is_dir()
         or len(list(output_directory.iterdir())) != num_frames
     ):
-        output_directory.mkdir(exist_ok=True)
+        output_directory.mkdir(exist_ok=True, parents=True)
         report_name = f"{video_path.parent.name}/{video_path.name}"
         for i in tqdm(
             range(int(num_frames)),
