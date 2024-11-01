@@ -21,12 +21,12 @@ import torch.multiprocessing
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
-from tcn_hpl.data.vectorize import (
+from tcn_hpl.data.frame_data import (
     FrameObjectDetections,
     FramePoses,
     FrameData,
-    Vectorize,
 )
+from tcn_hpl.data.vectorize import Vectorize
 
 
 logger = logging.getLogger(__name__)
