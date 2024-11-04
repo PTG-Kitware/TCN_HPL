@@ -90,6 +90,9 @@ class FrameData:
     # This may be None, which implies that an object pose estimation was not
     # run for this frame.
     poses: tg.Optional[FramePoses]
+    # FrameSize: Length-2 tuple expected: (width, height).
+    # This is the video frame's width and height in pixels.
+    size: tuple
 
     def __bool__(self):
         """
