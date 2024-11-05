@@ -110,7 +110,7 @@ class LocsAndConfs(Vectorize):
                     # H
                     frame_feat, vector_ind = self.append_vector(frame_feat, vector_ind, f_dets.boxes[idx][3] / H)
             else:
-                for _ in range(0,5):
+                for _ in range(0, self._top_k * 5):
                     # 5 Zeros
                     frame_feat, vector_ind = self.append_vector(frame_feat, vector_ind, 0)
         
