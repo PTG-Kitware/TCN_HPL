@@ -3,9 +3,10 @@ _target_: tcn_hpl.data.ptg_datamodule.PTGDataModule
 train_dataset:
   _target_: tcn_hpl.data.tcn_dataset.TCNDataset
   window_size: 15
-    # No vectorizer should be specified here, as there should be no "default". 
-  # Example of a vectorizer:
-  # vectorizer:
+  # A vectorizer is required to complete construction of a TCN Dataset.
+  # We are not providing a default here given how hydra merged hyperparameters.
+  # For example:
+  #vectorize:
   #  _target_: tcn_hpl.data.vectorize.classic.Classic
   #  feat_version: 6
   #  top_k: 1
@@ -13,15 +14,15 @@ train_dataset:
   #  background_idx: 0
   #  hand_left_idx: 5
   #  hand_right_idx: 6
-  transform:
+  transform_frame_data:
     _target_: torchvision.transforms.Compose
     transforms: []
 
 val_dataset:
   _target_: tcn_hpl.data.tcn_dataset.TCNDataset
   window_size: ${data.train_dataset.window_size}
-  vectorizer: ${data.train_dataset.vectorizer}
-  transform:
+  vectorize: ${data.train_dataset.vectorize}
+  transform_frame_data:
     _target_: torchvision.transforms.Compose
     transforms: []
 
@@ -36,7 +37,6 @@ coco_validation_poses: ""
 coco_test_activities: ""
 coco_test_objects: ""
 coco_test_poses: ""
-vector_cache_dir: "${paths.coco_file_root}/dataset_vector_cache"
 batch_size: 128
 num_workers: 0
 target_framerate: 15
