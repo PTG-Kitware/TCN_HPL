@@ -70,7 +70,6 @@ class LocsAndConfs(Vectorize):
         frame_feat[i] = number
         return frame_feat, i + 1
 
-
     def vectorize(self, data: FrameData) -> npt.NDArray[np.float32]:
 
         #########################
