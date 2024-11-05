@@ -11,9 +11,20 @@ class LocsAndConfs(Vectorize):
     Previous manual approach to vectorization.
 
     Arguments:
-        feat_version: Version number of the feature to produce.
         top_k: The number of top per-class examples to use in vector
             construction.
+        num_classes: the number of classes in the object detector.
+        use_joint_confs: use the confidence of each pose joint.
+            (changes the length of the input vector, which needs to
+            be manually updated if this flag changes.)
+        use_pixel_norm: Normalize pixel coordinates by dividing by
+            frame height and width, respectively. Normalized values 
+            are between 0 and 1. Does not change input vector length.
+        use_joint_obj_offsets: add abs(X and Y offsets) for between joints and
+            each object.
+            (changes the length of the input vector, which needs to
+            be manually updated if this flag changes.)
+        
     """
 
     def __init__(
@@ -22,7 +33,7 @@ class LocsAndConfs(Vectorize):
         num_classes: int = 7,
         use_joint_confs: bool = True,
         use_pixel_norm: bool = True,
-        use_hand_obj_offsets: bool = False,
+        use_joint_obj_offsets: bool = False,
         background_idx: int = 0
     ):
         super().__init__()
@@ -31,7 +42,7 @@ class LocsAndConfs(Vectorize):
         self._num_classes = num_classes
         self._use_joint_confs = use_joint_confs
         self._use_pixel_norm = use_pixel_norm
-        self._use_hand_obj_offsets = use_hand_obj_offsets
+        self._use_joint_obj_offsets = use_joint_obj_offsets
         self._background_idx = background_idx
     
     # Get the top "k" object indexes for each object
