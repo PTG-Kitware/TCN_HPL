@@ -83,7 +83,7 @@ class LocsAndConfs(Vectorize):
         #         obj H * num_objects(7 for M2)
         #         casualty conf * 1
         vector_len = 102
-        frame_feat = np.zeros(vector_len)
+        frame_feat = np.zeros(vector_len, dtype=np.float32)
         vector_ind = 0
         if self._use_pixel_norm:
             W = data.size[0]
@@ -139,7 +139,5 @@ class LocsAndConfs(Vectorize):
                 frame_feat, vector_ind = self.append_vector(frame_feat, vector_ind, 0)
         
         assert vector_ind == vector_len
-
-        frame_feat = frame_feat.ravel().astype(np.float32)
 
         return frame_feat
