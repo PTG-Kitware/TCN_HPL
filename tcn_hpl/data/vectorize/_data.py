@@ -92,7 +92,7 @@ class FrameData:
     poses: tg.Optional[FramePoses]
     # FrameSize: Length-2 tuple expected: (width, height).
     # This is the video frame's width and height in pixels.
-    size: tuple
+    size: tg.Tuple[int, int]
 
     def __bool__(self):
         """
