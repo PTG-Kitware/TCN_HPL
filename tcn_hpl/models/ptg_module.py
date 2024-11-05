@@ -90,6 +90,9 @@ class PTGLitModule(LightningModule):
         self.val_f1 = F1Score(
             num_classes=num_classes, average="none", task="multiclass"
         )
+        self.val_f1_avg = F1Score(
+            num_classes=num_classes, average="weighted", task="multiclass"
+        )
         self.test_f1 = F1Score(
             num_classes=num_classes, average="none", task="multiclass"
         )
@@ -97,12 +100,18 @@ class PTGLitModule(LightningModule):
         self.val_recall = Recall(
             num_classes=num_classes, average="none", task="multiclass"
         )
+        self.val_recall_avg = Recall(
+            num_classes=num_classes, average="weighted", task="multiclass"
+        )
         self.test_recall = Recall(
             num_classes=num_classes, average="none", task="multiclass"
         )
 
         self.val_precision = Precision(
             num_classes=num_classes, average="none", task="multiclass"
+        )
+        self.val_precision_avg = Precision(
+            num_classes=num_classes, average="weighted", task="multiclass"
         )
         self.test_precision = Precision(
             num_classes=num_classes, average="none", task="multiclass"
@@ -347,24 +356,22 @@ class PTGLitModule(LightningModule):
         all_targets = torch.cat([o['targets'] for o in outputs])
 
         acc = self.val_acc.compute()
-        current_best_val_acc = self.val_acc_best.value
         # log `val_acc_best` as a value through `.compute()` return, instead of
         # as a metric object otherwise metric would be reset by lightning after
         # each epoch.
         best_val_acc = self.val_acc_best(acc)  # update best so far val acc
-
-        if best_val_acc > current_best_val_acc:
-            val_f1_score = self.val_f1(all_preds, all_targets)
-            val_recall_score = self.val_recall(all_preds, all_targets)
-            val_precision_score = self.val_precision(all_preds, all_targets)
-
-            # print(f"preds: {all_preds}")
-            # print(f"all_targets: {all_targets}")
-            print(f"validation f1 score: {val_f1_score}")
-            print(f"validation recall score: {val_recall_score}")
-            print(f"validation precision score: {val_precision_score}")
-
         self.log("val/acc_best", best_val_acc, sync_dist=True, prog_bar=True)
+
+        val_f1_score = self.val_f1(all_preds, all_targets)
+        val_recall_score = self.val_recall(all_preds, all_targets)
+        val_precision_score = self.val_precision(all_preds, all_targets)
+        self.val_f1_avg(all_preds, all_targets)
+        self.val_recall_avg(all_preds, all_targets)
+        self.val_precision_avg(all_preds, all_targets)
+        self.log("val/f1", self.val_f1_avg, prog_bar=True, on_epoch=True)
+        self.log("val/recall", self.val_recall_avg, prog_bar=True, on_epoch=True)
+        self.log("val/prevision", self.val_precision_avg, prog_bar=True, on_epoch=True)
+
 
     def test_step(
         self,
