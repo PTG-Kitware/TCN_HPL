@@ -209,11 +209,11 @@ def test():
     transform = DropoutFrameDataTransform(
         frame_rate=15,
         dets_throughput_mean=14.5,
-        dets_throughput_std=0.2,
-        dets_latency=0,
         pose_throughput_mean=10,
+        dets_latency=0,
+        pose_latency=1/10,  # (1 / 10) - (1 / 14.5),
+        dets_throughput_std=0.2,
         pose_throughput_std=0.2,
-        pose_latency=(1 / 10) - (1 / 14.5),
     )
     modified_sequence = transform(sequence)
 

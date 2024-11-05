@@ -6,7 +6,9 @@ from numpy import typing as npt
 
 from tcn_hpl.data.vectorize._interface import Vectorize, FrameData
 
+
 NUM_POSE_JOINTS = 22
+
 
 class LocsAndConfs(Vectorize):
     """
@@ -20,13 +22,12 @@ class LocsAndConfs(Vectorize):
             (changes the length of the input vector, which needs to
             be manually updated if this flag changes.)
         use_pixel_norm: Normalize pixel coordinates by dividing by
-            frame height and width, respectively. Normalized values 
+            frame height and width, respectively. Normalized values
             are between 0 and 1. Does not change input vector length.
         use_joint_obj_offsets: add abs(X and Y offsets) for between joints and
             each object.
             (changes the length of the input vector, which needs to
             be manually updated if this flag changes.)
-        
     """
 
     def __init__(
@@ -46,7 +47,7 @@ class LocsAndConfs(Vectorize):
         self._use_pixel_norm = use_pixel_norm
         self._use_joint_obj_offsets = use_joint_obj_offsets
         self._background_idx = background_idx
-    
+
     # Get the top "k" object indexes for each object
     @staticmethod
     def get_top_k_indexes_of_one_obj_type(f_dets, k, label_ind):
@@ -71,14 +72,14 @@ class LocsAndConfs(Vectorize):
     def append_vector(frame_feat, i, number):
         frame_feat[i] = number
         return frame_feat, i + 1
-    
+
     def determine_vector_length(self, data: FrameData) -> int:
         #########################
         # Feature vector
         #########################
         # Length: pose confs * 22, pose X's * 22, pose Y's * 22,
-        #         obj confs * num_objects(7 for M2), 
-        #         obj X * num_objects(7 for M2), 
+        #         obj confs * num_objects(7 for M2),
+        #         obj X * num_objects(7 for M2),
         #         obj Y * num_objects(7 for M2)
         #         obj W * num_objects(7 for M2)
         #         obj H * num_objects(7 for M2)
@@ -131,7 +132,7 @@ class LocsAndConfs(Vectorize):
                 for _ in range(0, self._top_k * 5):
                     # 5 Zeros
                     frame_feat, vector_ind = self.append_vector(frame_feat, vector_ind, 0)
-        
+
         f_poses = data.poses
         if f_poses:
             # Find most confident body detection
@@ -155,7 +156,7 @@ class LocsAndConfs(Vectorize):
                 rows_per_joint = 2
             for _ in range(num_joints * rows_per_joint + 1):
                 frame_feat, vector_ind = self.append_vector(frame_feat, vector_ind, 0)
-        
+
         assert vector_ind == vector_len
 
         return frame_feat

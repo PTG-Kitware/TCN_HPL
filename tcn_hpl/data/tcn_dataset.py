@@ -1,8 +1,6 @@
 import click
 import logging
 import os
-from hashlib import sha256
-import json
 from pathlib import Path
 import time
 from typing import Callable
@@ -12,12 +10,10 @@ from typing import Optional
 from typing import Sequence
 from typing import Set
 from typing import Tuple
-from typing import Union
 
 import kwcoco
 import numpy as np
 import numpy.typing as npt
-import torch.multiprocessing
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
@@ -55,22 +51,26 @@ class TCNDataset(Dataset):
         window_size:
             The size of the sliding window used to collect inputs from either a
             real-time or offline source.
-        vectorizer:
+        transform_frame_data:
+            Optional augmentation function that operates on a window of
+            FrameData before being input to vectorization. Such an augmentation
+            function should not modify the input FrameData.
+        vectorize:
             Vectorization functor to convert frame data into an embedding
             space.
-        transform:
-            Optional feature vector transformation/augmentation function.
     """
 
     def __init__(
         self,
         window_size: int,
-        vectorizer: Vectorize,
-        transform: Optional[Callable] = None,
+        vectorize: Vectorize,
+        transform_frame_data: Optional[
+            Callable[[Sequence[FrameData]], Sequence[FrameData]]
+        ] = None,
     ):
         self.window_size = window_size
-        self.vectorizer = vectorizer
-        self.transform = transform
+        self.vectorize = vectorize
+        self.transform_frame_data = transform_frame_data
 
         # For offline mode, pre-cut videos into clips according to window
         # size for easy batching.
@@ -98,11 +98,6 @@ class TCNDataset(Dataset):
         # weighted random sampling during training. This should only be
         # available when there is truth available, i.e. during offline mode.
         self._window_weights: Optional[npt.NDArray[float]] = None
-        # Optionally defined set of pre-computed vectors for each frame.
-        # Congruent index association with self._frame_data, so
-        # self._window_data_idx values may be used here.
-        # Shape: (n_frames, feat_dim)  # see self._frame_data
-        self._frame_vectors: Optional[npt.NDArray[np.float32]] = None
 
         # Constant 1's mask value to re-use during get-item.
         self._ones_mask: npt.NDArray[int] = np.ones(window_size, dtype=int)
@@ -126,9 +121,6 @@ class TCNDataset(Dataset):
         pose_coco: kwcoco.CocoDataset,
         target_framerate: float,  # probably 15
         framerate_round_decimals: int = 1,
-        pre_vectorize: bool = True,
-        pre_vectorize_cores: int = os.cpu_count(),
-        cache_dir: Optional[Union[str, Path]] = None,
     ) -> None:
         """
         Load data from filesystem resources for use during training.
@@ -138,6 +130,11 @@ class TCNDataset(Dataset):
 
         Vector caching also requires that the input COCO datasets have an
         associated filepath that exists.
+
+        Assumptions:
+            * This assumes that input pose predictions only contain a single
+              class that has pose keypoints associated with it. The current
+              PoseData structure has no slot for
 
         Args:
             activity_coco:
@@ -157,14 +154,6 @@ class TCNDataset(Dataset):
             framerate_round_decimals:
                 Number of floating-point decimals to round to when considering
                 frame-rates.
-            pre_vectorize:
-                If we should pre-compute window vectors, possibly caching the
-                results, as part of this load.
-            pre_vectorize_cores:
-                Number of cores to utilize when pre-computing window vectors.
-            cache_dir:
-                Optional directory for cache file storage and retrieval. If
-                this is not specified, no caching will occur.
         """
         # The data coverage for all the input datasets must be congruent.
         logger.info("Checking dataset video/image congruency")
@@ -269,7 +258,7 @@ class TCNDataset(Dataset):
         # cache frequently called module functions
         np_asarray = np.asarray
 
-        for vid_id in tqdm(activity_coco.videos()):
+        for vid_id in tqdm(activity_coco.videos(), unit="video"):
             vid_id: int
             vid_images = activity_coco.images(video_id=vid_id)
             vid_img_ids: List[int] = list(vid_images)
@@ -306,7 +295,7 @@ class TCNDataset(Dataset):
                         )
                     else:
                         frame_dets = empty_dets
-                    
+
                     # Frame height and width should be available.
                     img_info = activity_coco.index.imgs[img_id]
                     assert "height" in img_info
@@ -396,99 +385,6 @@ class TCNDataset(Dataset):
         cls_weights[cls_ids] = 1.0 / cls_counts
         self._window_weights = cls_weights[window_final_class_ids]
 
-        # Check if there happens to be a cache file of pre-computed window
-        # vectors available to load.
-        #
-        # Caching is even possible if:
-        # * given a directory home for cache files
-        # * input COCO dataset filepaths are real and can be checksum'ed.
-        has_vector_cache = False
-        cache_filepath = None
-        activity_coco_fpath = Path(activity_coco.fpath)
-        dets_coco_fpath = Path(dets_coco.fpath)
-        pose_coco_fpath = Path(pose_coco.fpath)
-        if (
-            pre_vectorize
-            and cache_dir is not None
-            and activity_coco_fpath.is_file()
-            and dets_coco_fpath.is_file()
-            and pose_coco_fpath.is_file()
-        ):
-            csum = sha256()
-            with open(activity_coco_fpath, "rb") as f:
-                csum.update(f.read())
-            with open(dets_coco_fpath, "rb") as f:
-                csum.update(f.read())
-            with open(pose_coco_fpath, "rb") as f:
-                csum.update(f.read())
-            csum.update(f"{target_framerate:0.{framerate_round_decimals}f}".encode())
-            csum.update(f"{self.window_size:d}".encode())
-            csum.update(self.vectorizer.__class__.__module__.encode())
-            csum.update(self.vectorizer.__class__.__name__.encode())
-            csum.update(json.dumps(self.vectorizer.hparams()).encode())
-            # Include vectorization variables in the name of the file.
-            # Note the "z" in the name, expecting to use savez_compressed.
-            cache_filename = "{}.npz".format(csum.hexdigest())
-            cache_filepath = Path(cache_dir) / cache_filename
-            has_vector_cache = cache_filepath.is_file()
-
-        if pre_vectorize:
-            if has_vector_cache:
-                logger.info("Loading frame vectors from cache...")
-                with np.load(cache_filepath) as data:
-                    self._frame_vectors = data["frame_vectors"]
-                logger.info("Loading frame vectors from cache... Done")
-            else:
-                # Pre-vectorize data for iteration efficiency during training.
-                # * Creating a mini Dataset/Dataloader situation to efficiently
-                #   generate vectors.
-
-                # Set the sharing strategy to filesystem for the duration of
-                # this operation, and then restoring the existing strategy
-                # after we're done.
-                current_sharing_strategy = torch.multiprocessing.get_sharing_strategy()
-
-                try:
-                    # This iteration seems to go twice as fast when utilizing
-                    # the file-system strategy.
-                    torch.multiprocessing.set_sharing_strategy("file_system")
-
-                    vec_dset = _VectorizationDataset(self.vectorizer, frame_data)
-
-                    # Using larger batch sizes than 1 did not show any particular
-                    # increase in throughput. This may require increasing
-                    # `ulimit -n`, though.
-                    dloader = DataLoader(
-                        vec_dset,
-                        batch_size=1,
-                        num_workers=pre_vectorize_cores,
-                        # Required, especially for large dataset sizes, so the
-                        # dataloader multiprocessing iteration does not exhaust
-                        # shared memory.
-                        pin_memory=True,
-                    )
-
-                    frame_vectors: List[npt.NDArray[np.float32]] = []
-                    for batch in tqdm(
-                        dloader,
-                        desc="Frame data vectorized",
-                        unit="frames",
-                    ):
-                        frame_vectors.extend(batch.numpy())
-                finally:
-                    torch.multiprocessing.set_sharing_strategy(current_sharing_strategy)
-
-                self._frame_vectors = np.asarray(frame_vectors)
-
-                if cache_filepath is not None:
-                    logger.info("Saving window vectors to cache...")
-                    cache_filepath.parent.mkdir(parents=True, exist_ok=True)
-                    np.savez_compressed(
-                        cache_filepath,
-                        frame_vectors=frame_vectors,
-                    )
-                    logger.info("Saving window vectors to cache... Done")
-
     def load_data_online(
         self,
         window_data: Sequence[FrameData],
@@ -550,26 +446,15 @@ class TCNDataset(Dataset):
         window_vid = self._window_vid[index]
         window_frames = self._window_frames[index]
 
-        frame_vectors = self._frame_vectors
-        if frame_vectors is not None:
-            window_mat = frame_vectors[window_data_idx]
-        else:
-            vectorizer = self.vectorizer
-            window_mat = np.asarray(
-                [vectorizer(frame_data[idx]) for idx in window_data_idx]
-            )
+        window_frame_data = [frame_data[idx] for idx in window_data_idx]
 
-        # Augmentation has to happen on the fly and cannot be pre-computed due
-        # to random aspects that augmentation can be configured to have during
-        # training.
-        if self.transform is not None:
-            # TODO: Augment using a helper on the vectorizer? I'm imaging that
-            #       augmentations might be specific to which vectorizer is
-            #       used.
-            window_mat = self.transform(window_mat)
+        if self.transform_frame_data is not None:
+            window_frame_data = self.transform_frame_data(window_frame_data)
+
+        window_vectors = np.asarray([self.vectorize(d) for d in window_frame_data])
 
         return (
-            window_mat,
+            window_vectors,
             window_truth,
             # Under the current operation of this dataset, the mask should always
             # consist of 1's. This may be removed in the future.
@@ -586,23 +471,6 @@ class TCNDataset(Dataset):
             length: Length of the dataset.
         """
         return len(self._window_data_idx) if self._window_data_idx is not None else 0
-
-
-class _VectorizationDataset(Dataset):
-    """
-    Helper dataset for iterating over individual frames of data and producing
-    embedding vectors.
-    """
-
-    def __init__(self, vectorize: Vectorize, frame_data: Sequence[FrameData]):
-        self.vectorize = vectorize
-        self.frame_data = frame_data
-
-    def __len__(self):
-        return len(self.frame_data)
-
-    def __getitem__(self, item):
-        return self.vectorize(self.frame_data[item])
 
 
 @click.command()
@@ -622,19 +490,12 @@ class _VectorizationDataset(Dataset):
     default=15,
     show_default=True,
 )
-@click.option(
-    "--pre-vectorize",
-    is_flag=True,
-    help="Run pre-vectorization or not.",
-    show_default=True,
-)
 def test_dataset_for_input(
     activity_coco: Path,
     detections_coco: Path,
     pose_coco: Path,
     window_size: int,
     target_framerate: float,
-    pre_vectorize: bool,
 ):
     """
     Test the TCN Dataset iteration over some test data.
@@ -647,22 +508,42 @@ def test_dataset_for_input(
 
     # TODO: Some method of configuring which vectorizer to use.
     from tcn_hpl.data.vectorize.locs_and_confs import LocsAndConfs
-    vectorizer = LocsAndConfs(
+
+    vectorize = LocsAndConfs(
         top_k = 1,
         num_classes = 7,
         use_joint_confs = True,
         use_pixel_norm = True,
-        use_hand_obj_offsets = False,
-        background_idx = 0
+        use_joint_obj_offsets = False,
+        background_idx = 0,
     )
 
-    dataset = TCNDataset(window_size=window_size, vectorizer=vectorizer)
+    # TODO: Some method of configuring which augmentations to use.
+    from tcn_hpl.data.frame_data_aug.window_frame_dropout import DropoutFrameDataTransform
+    import torchvision.transforms
+
+    transform_frame_data = torchvision.transforms.Compose([
+        DropoutFrameDataTransform(
+            frame_rate=15,
+            dets_throughput_mean=14.5,
+            pose_throughput_mean=10,
+            dets_latency=0,
+            pose_latency=1/10,  # (1 / 10) - (1 / 14.5),
+            dets_throughput_std=0.2,
+            pose_throughput_std=0.2,
+        )
+    ])
+
+    dataset = TCNDataset(
+        window_size=window_size,
+        vectorize=vectorize,
+        transform_frame_data=transform_frame_data,
+    )
     dataset.load_data_offline(
         activity_coco,
         dets_coco,
         pose_coco,
         target_framerate=target_framerate,
-        pre_vectorize=pre_vectorize,
     )
 
     logger.info(f"Number of windows: {len(dataset)}")
@@ -673,12 +554,13 @@ def test_dataset_for_input(
 
     # Test that we can iterate over the dataset using a DataLoader with
     # shuffling.
-    batch_size = 512  # 16
+    batch_size = 1 # 16384  # 512  # 16
     data_loader = DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=True,
         num_workers=os.cpu_count(),
+        # Pin is required for large quantities of batches here.
         pin_memory=True,
     )
     count = 0
@@ -688,12 +570,13 @@ def test_dataset_for_input(
         desc="Iterating batches of features",
         unit="batches",
     ):
-        count += 1
+        count += len(batch[0])
     duration = time.time() - s
     logger.info(f"Iterated over the full TCN Dataset in {duration:.2f} s.")
+    logger.info(f"Windows per-second: {count / duration}")
 
     # Test creating online mode with subset of data from above.
-    dset_online = TCNDataset(window_size=window_size, vectorizer=vectorizer)
+    dset_online = TCNDataset(window_size=window_size, vectorize=vectorize)
     dset_online.load_data_online(dataset._frame_data[:window_size])  # noqa
     assert len(dset_online) == 1, "Online dataset should be size 1"
     _ = dset_online[0]
@@ -704,9 +587,11 @@ def test_dataset_for_input(
     except IndexError:
         failed_index_error = False
     assert not failed_index_error, "Should have had an index error at [1]"
-    assert (
-        (dataset[0][0] == dset_online[0][0]).all()  # noqa
-    ), "Online should have produced same window matrix as offline version."
+    assert (  # noqa
+        dataset[0][0] == dset_online[0][0]
+    ).all(), (
+        "Online should have produced same window matrix as offline version."
+    )
 
 
 if __name__ == "__main__":

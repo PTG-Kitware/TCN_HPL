@@ -5,7 +5,7 @@ import hydra
 import kwcoco
 from pytorch_lightning import LightningDataModule
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from torchvision.transforms import transforms
 from typing import Any, Optional
 
@@ -104,7 +104,6 @@ class PTGDataModule(LightningDataModule):
         coco_test_activities: str,
         coco_test_objects: str,
         coco_test_poses: str,
-        vector_cache_dir: str,
         batch_size: int,
         num_workers: int,
         target_framerate: float,
@@ -166,24 +165,18 @@ class PTGDataModule(LightningDataModule):
                 kwcoco.CocoDataset(self.hparams.coco_train_objects),
                 kwcoco.CocoDataset(self.hparams.coco_train_poses),
                 self.hparams.target_framerate,
-                pre_vectorize=True,
-                cache_dir=self.hparams.vector_cache_dir,
             )
             self.data_val.load_data_offline(
                 kwcoco.CocoDataset(self.hparams.coco_validation_activities),
                 kwcoco.CocoDataset(self.hparams.coco_validation_objects),
                 kwcoco.CocoDataset(self.hparams.coco_validation_poses),
                 self.hparams.target_framerate,
-                pre_vectorize=True,
-                cache_dir=self.hparams.vector_cache_dir,
             )
             self.data_test.load_data_offline(
                 kwcoco.CocoDataset(self.hparams.coco_test_activities),
                 kwcoco.CocoDataset(self.hparams.coco_test_objects),
                 kwcoco.CocoDataset(self.hparams.coco_test_poses),
                 self.hparams.target_framerate,
-                pre_vectorize=True,
-                cache_dir=self.hparams.vector_cache_dir,
             )
 
     def train_dataloader(self) -> DataLoader[Any]:
@@ -210,7 +203,6 @@ class PTGDataModule(LightningDataModule):
 
         :return: The validation dataloader.
         """
-
         return DataLoader(
             dataset=self.data_val,
             batch_size=self.hparams.batch_size,
