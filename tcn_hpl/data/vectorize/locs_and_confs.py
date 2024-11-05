@@ -64,6 +64,7 @@ class LocsAndConfs(Vectorize):
         # Sort labels by score values.
         sorted_inds = [i[1] for i in sorted(zip(filtered_scores, filtered_idxs))]
         return sorted_inds[:k]
+
     @staticmethod
     def append_vector(frame_feat, i, number):
         frame_feat[i] = number
