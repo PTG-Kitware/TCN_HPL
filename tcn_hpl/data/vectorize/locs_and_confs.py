@@ -5,13 +5,6 @@ import numpy as np
 from numpy import typing as npt
 
 from tcn_hpl.data.vectorize._interface import Vectorize, FrameData
-from tcn_hpl.data.vectorize_classic import (
-    obj_det2d_set_to_feature,
-    zero_joint_offset,
-    HAND_STR_LEFT,
-    HAND_STR_RIGHT,
-)
-
 
 class LocsAndConfs(Vectorize):
     """
@@ -136,6 +129,6 @@ class LocsAndConfs(Vectorize):
         
         assert vector_ind == vector_len
 
-        frame_feat = frame_feat.ravel().astype(feat_dtype)
+        frame_feat = frame_feat.ravel().astype(np.float32)
 
         return frame_feat
