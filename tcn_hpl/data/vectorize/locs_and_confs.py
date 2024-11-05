@@ -64,11 +64,11 @@ class LocsAndConfs(Vectorize):
         # Sort labels by score values.
         sorted_inds = [i[1] for i in sorted(zip(filtered_scores, filtered_idxs))]
         return sorted_inds[:k]
+
     @staticmethod
     def append_vector(frame_feat, i, number):
         frame_feat[i] = number
         return frame_feat, i + 1
-
 
     def vectorize(self, data: FrameData) -> npt.NDArray[np.float32]:
 
@@ -110,7 +110,7 @@ class LocsAndConfs(Vectorize):
                     # H
                     frame_feat, vector_ind = self.append_vector(frame_feat, vector_ind, f_dets.boxes[idx][3] / H)
             else:
-                for _ in range(0,5):
+                for _ in range(0, self._top_k * 5):
                     # 5 Zeros
                     frame_feat, vector_ind = self.append_vector(frame_feat, vector_ind, 0)
         
