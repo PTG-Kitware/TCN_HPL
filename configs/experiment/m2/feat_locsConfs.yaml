@@ -26,7 +26,6 @@ defaults:
 #   run files are stored.
 # Default is "train" set in the "configs/train.yaml" file.
 #task_name:
-task_name: cameron_locs_and_confs
 
 # simply provide checkpoint path to resume training
 #ckpt_path: null
