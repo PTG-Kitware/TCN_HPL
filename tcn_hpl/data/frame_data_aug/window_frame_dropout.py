@@ -175,6 +175,7 @@ class DropoutFrameDataTransform(torch.nn.Module):
                     window[idx].object_detections if dets_mask[idx] else None
                 ),
                 poses=(window[idx].poses if pose_mask[idx] else None),
+                size=window[idx].size,  # forward existing value
             )
             for idx in range(n_frames)
         ]
@@ -197,6 +198,7 @@ def test():
             joint_positions=np.array([[[10, 20], [30, 40], [50, 60]]]),
             joint_scores=np.array([[0.9, 0.85, 0.8]]),
         ),
+        size=(500, 500),
     )
     sequence = [frame1] * 25
     # transform = DropoutFrameDataTransform(

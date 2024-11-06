@@ -1,6 +1,3 @@
-import functools
-import typing as tg
-
 import numpy as np
 from numpy import typing as npt
 
@@ -73,7 +70,7 @@ class LocsAndConfs(Vectorize):
         frame_feat[i] = number
         return frame_feat, i + 1
 
-    def determine_vector_length(self, data: FrameData) -> int:
+    def determine_vector_length(self) -> int:
         #########################
         # Feature vector
         #########################
@@ -85,19 +82,21 @@ class LocsAndConfs(Vectorize):
         #         obj H * num_objects(7 for M2)
         #         casualty conf * 1
         vector_length = 0
+        # [Conf, X, Y, W, H] for k instances of each object class.
+        vector_length += 5 * self._top_k * self._num_classes
+        # Pose confidence score
+        vector_length += 1
         # Joint confidences
         if self._use_joint_confs:
             vector_length += NUM_POSE_JOINTS
         # X and Y for each joint
         vector_length += 2 * NUM_POSE_JOINTS
-        # [Conf, X, Y, W, H] for k instances of each object class.
-        vector_length = 5 * self._top_k * self._num_classes
         return vector_length
 
 
     def vectorize(self, data: FrameData) -> npt.NDArray[np.float32]:
 
-        vector_len = self.determine_vector_length(data)
+        vector_len = self.determine_vector_length()
         frame_feat = np.zeros(vector_len, dtype=np.float32)
         # TODO: instead of carrying around this vector_ind, we should
         # directly compute the offset of each feature we add to the TCN
@@ -109,29 +108,34 @@ class LocsAndConfs(Vectorize):
         else:
             W = 1
             H = 1
-        f_dets = data.object_detections
 
-        # Loop through all classes: populate obj conf, obj X, obj Y.
-        # Assumption: class labels are [0, 1, 2,... num_classes-1].
-        # TODO: this will break if top_k is ever > 1. Fix that.
-        for obj_ind in range(0,self._num_classes):
-            top_k_idxs = self.get_top_k_indexes_of_one_obj_type(f_dets, self._top_k, obj_ind)
-            if top_k_idxs: # This is None if there were no detections to sort for this class
-                for idx in top_k_idxs:
-                    # Conf
-                    frame_feat, vector_ind = self.append_vector(frame_feat, vector_ind, f_dets.scores[idx])
-                    # X
-                    frame_feat, vector_ind = self.append_vector(frame_feat, vector_ind, f_dets.boxes[idx][0] / W)
-                    # Y
-                    frame_feat, vector_ind = self.append_vector(frame_feat, vector_ind, f_dets.boxes[idx][1] / H)
-                    # W
-                    frame_feat, vector_ind = self.append_vector(frame_feat, vector_ind, f_dets.boxes[idx][2] / W)
-                    # H
-                    frame_feat, vector_ind = self.append_vector(frame_feat, vector_ind, f_dets.boxes[idx][3] / H)
-            else:
-                for _ in range(0, self._top_k * 5):
-                    # 5 Zeros
-                    frame_feat, vector_ind = self.append_vector(frame_feat, vector_ind, 0)
+        f_dets = data.object_detections
+        if f_dets:
+            # Loop through all classes: populate obj conf, obj X, obj Y.
+            # Assumption: class labels are [0, 1, 2,... num_classes-1].
+            # TODO: this will break if top_k is ever > 1. Fix that.
+            for obj_ind in range(0,self._num_classes):
+                top_k_idxs = self.get_top_k_indexes_of_one_obj_type(f_dets, self._top_k, obj_ind)
+                if top_k_idxs: # This is None if there were no detections to sort for this class
+                    for idx in top_k_idxs:
+                        # Conf
+                        frame_feat, vector_ind = self.append_vector(frame_feat, vector_ind, f_dets.scores[idx])
+                        # X
+                        frame_feat, vector_ind = self.append_vector(frame_feat, vector_ind, f_dets.boxes[idx][0] / W)
+                        # Y
+                        frame_feat, vector_ind = self.append_vector(frame_feat, vector_ind, f_dets.boxes[idx][1] / H)
+                        # W
+                        frame_feat, vector_ind = self.append_vector(frame_feat, vector_ind, f_dets.boxes[idx][2] / W)
+                        # H
+                        frame_feat, vector_ind = self.append_vector(frame_feat, vector_ind, f_dets.boxes[idx][3] / H)
+                else:
+                    for _ in range(0, self._top_k * 5):
+                        # 5 Zeros
+                        frame_feat, vector_ind = self.append_vector(frame_feat, vector_ind, 0)
+        else:
+            # No detections, fill in appropriate amount of zeros.
+            for _ in range(self._num_classes * self._top_k * 5):
+                frame_feat, vector_ind = self.append_vector(frame_feat, vector_ind, 0)
 
         f_poses = data.poses
         if f_poses:
@@ -149,12 +153,11 @@ class LocsAndConfs(Vectorize):
                 # Y
                 frame_feat, vector_ind = self.append_vector(frame_feat, vector_ind, f_poses.joint_positions[confident_pose_idx][joint_ind][1] / H)
         else:
-            num_joints = f_poses.joint_positions.shape[1]
             if self._use_joint_confs:
                 rows_per_joint = 3
             else:
                 rows_per_joint = 2
-            for _ in range(num_joints * rows_per_joint + 1):
+            for _ in range(NUM_POSE_JOINTS * rows_per_joint + 1):
                 frame_feat, vector_ind = self.append_vector(frame_feat, vector_ind, 0)
 
         assert vector_ind == vector_len
