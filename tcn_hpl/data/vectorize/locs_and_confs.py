@@ -6,6 +6,8 @@ from numpy import typing as npt
 
 from tcn_hpl.data.vectorize._interface import Vectorize, FrameData
 
+NUM_POSE_JOINTS = 22
+
 class LocsAndConfs(Vectorize):
     """
     Previous manual approach to vectorization.
@@ -69,9 +71,8 @@ class LocsAndConfs(Vectorize):
     def append_vector(frame_feat, i, number):
         frame_feat[i] = number
         return frame_feat, i + 1
-
-    def vectorize(self, data: FrameData) -> npt.NDArray[np.float32]:
-
+    
+    def determine_vector_length(self, data: FrameData) -> int:
         #########################
         # Feature vector
         #########################
@@ -82,7 +83,20 @@ class LocsAndConfs(Vectorize):
         #         obj W * num_objects(7 for M2)
         #         obj H * num_objects(7 for M2)
         #         casualty conf * 1
-        vector_len = 102
+        vector_length = 0
+        # Joint confidences
+        if self._use_joint_confs:
+            vector_length += NUM_POSE_JOINTS
+        # X and Y for each joint
+        vector_length += 2 * NUM_POSE_JOINTS
+        # [Conf, X, Y, W, H] for k instances of each object class.
+        vector_length = 5 * self._top_k * self._num_classes
+        return vector_length
+
+
+    def vectorize(self, data: FrameData) -> npt.NDArray[np.float32]:
+
+        vector_len = self.determine_vector_length(data)
         frame_feat = np.zeros(vector_len, dtype=np.float32)
         vector_ind = 0
         if self._use_pixel_norm:
