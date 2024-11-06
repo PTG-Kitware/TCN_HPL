@@ -306,6 +306,12 @@ class TCNDataset(Dataset):
                         )
                     else:
                         frame_dets = empty_dets
+                    
+                    # Frame height and width should be available.
+                    img_info = activity_coco.index.imgs[img_id]
+                    assert "height" in img_info
+                    assert "width" in img_info
+                    frame_size = (img_info["width"], img_info["height"])
 
                     # Only consider annotations that actually have keypoints.
                     # There may be no poses on this frame.
@@ -336,7 +342,8 @@ class TCNDataset(Dataset):
                         )
                     else:
                         frame_poses = empty_pose
-                    vid_frame_data.append(FrameData(frame_dets, frame_poses))
+                    # import ipdb; ipdb.set_trace()
+                    vid_frame_data.append(FrameData(frame_dets, frame_poses, frame_size))
 
                 # Compose a list of indices into frame_data that this video's
                 # worth of content resides.
@@ -639,15 +646,14 @@ def test_dataset_for_input(
     pose_coco = kwcoco.CocoDataset(pose_coco)
 
     # TODO: Some method of configuring which vectorizer to use.
-    from tcn_hpl.data.vectorize.classic import Classic
-    vectorizer = Classic(
-        feat_version=6,
-        top_k=1,
-        # M2/R18 object detection class indices
-        num_classes=7,
-        background_idx=0,
-        hand_left_idx=5,
-        hand_right_idx=6,
+    from tcn_hpl.data.vectorize.locs_and_confs import LocsAndConfs
+    vectorizer = LocsAndConfs(
+        top_k = 1,
+        num_classes = 7,
+        use_joint_confs = True,
+        use_pixel_norm = True,
+        use_hand_obj_offsets = False,
+        background_idx = 0
     )
 
     dataset = TCNDataset(window_size=window_size, vectorizer=vectorizer)

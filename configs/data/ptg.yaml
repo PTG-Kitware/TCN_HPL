@@ -3,14 +3,16 @@ _target_: tcn_hpl.data.ptg_datamodule.PTGDataModule
 train_dataset:
   _target_: tcn_hpl.data.tcn_dataset.TCNDataset
   window_size: 15
-  vectorizer:
-    _target_: tcn_hpl.data.vectorize.classic.Classic
-    feat_version: 6
-    top_k: 1
-    num_classes: 7
-    background_idx: 0
-    hand_left_idx: 5
-    hand_right_idx: 6
+    # No vectorizer should be specified here, as there should be no "default". 
+  # Example of a vectorizer:
+  # vectorizer:
+  #  _target_: tcn_hpl.data.vectorize.classic.Classic
+  #  feat_version: 6
+  #  top_k: 1
+  #  num_classes: 7
+  #  background_idx: 0
+  #  hand_left_idx: 5
+  #  hand_right_idx: 6
   transform:
     _target_: torchvision.transforms.Compose
     transforms: []
