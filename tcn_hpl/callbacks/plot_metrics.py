@@ -253,8 +253,8 @@ class PlotMetrics(Callback):
 
         current_epoch = pl_module.current_epoch
         curr_acc = pl_module.val_acc.compute()
-        best_acc = pl_module.val_acc_best.compute()
         curr_f1 = pl_module.val_f1.compute()
+        best_f1 = pl_module.val_f1_best.compute()
 
         class_ids = np.arange(all_probs.shape[-1])
         num_classes = len(class_ids)
@@ -296,7 +296,7 @@ class PlotMetrics(Callback):
         if Image is not None:
             pl_module.logger.experiment.track(Image(fig), name=f"CM Validation Epoch")
 
-        if curr_acc >= best_acc:
+        if curr_f1 >= best_f1:
             fig.savefig(
                 self.output_dir
                 / f"confusion_mat_val_epoch{current_epoch:04d}_acc_{curr_acc:.4f}_f1_{curr_f1:.4f}.jpg",
@@ -380,7 +380,7 @@ class PlotMetrics(Callback):
 
         fig, ax = plt.subplots(figsize=(num_classes, num_classes))
 
-        sns.heatmap(cm, annot=True, ax=ax, fmt=".2f", vmin=0, vmax=1)
+        sns.heatmap(cm, annot=True, ax=ax, fmt=".2f", linewidth=0.5, vmin=0, vmax=1)
 
         # labels, title and ticks
         ax.set_xlabel("Predicted labels")

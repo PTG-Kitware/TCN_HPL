@@ -123,8 +123,7 @@ class PTGLitModule(LightningModule):
         self.test_loss = MeanMetric()
 
         # for tracking best so far validation accuracy
-        self.val_acc_best = MaxMetric()
-        self.train_acc_best = MaxMetric()
+        self.val_f1_best = MaxMetric()
 
     def forward(self, x: torch.Tensor, m: torch.Tensor) -> torch.Tensor:
         """Perform a forward pass through the model `self.net`.
@@ -141,13 +140,16 @@ class PTGLitModule(LightningModule):
         # so it's worth to make sure validation metrics don't store results from these checks
         self.val_loss.reset()
         self.val_acc.reset()
-        self.val_acc_best.reset()
+        self.val_f1.reset()
+        self.val_recall.reset()
+        self.val_precision.reset()
+        self.val_f1_best.reset()
 
     def compute_loss(self, p, y, mask):
         """Compute the total loss for a batch
 
         :param p: The prediction
-        :param batch_target: The target labels
+        :param y: The target labels
         :param mask: Marks valid input data
 
         :return: The loss
@@ -325,19 +327,18 @@ class PTGLitModule(LightningModule):
         all_preds = torch.cat([o['preds'] for o in outputs])
         all_targets = torch.cat([o['targets'] for o in outputs])
 
-        acc = self.val_acc.compute()
-        # log `val_acc_best` as a value through `.compute()` return, instead of
-        # as a metric object otherwise metric would be reset by lightning after
-        # each epoch.
-        best_val_acc = self.val_acc_best(acc)  # update best so far val acc
-        self.log("val/acc_best", best_val_acc, sync_dist=True, prog_bar=True)
-
         self.val_f1(all_preds, all_targets)
         self.val_recall(all_preds, all_targets)
         self.val_precision(all_preds, all_targets)
         self.log("val/f1", self.val_f1, prog_bar=True, on_epoch=True)
         self.log("val/recall", self.val_recall, prog_bar=True, on_epoch=True)
         self.log("val/precision", self.val_precision, prog_bar=True, on_epoch=True)
+
+        # log `val_f1_best` as a value through `.compute()` return, instead of
+        # as a metric object otherwise metric would be reset by lightning after
+        # each epoch.
+        self.val_f1_best(self.val_f1.compute())
+        self.log("val/f1_best", self.val_f1_best.compute(), prog_bar=True, on_epoch=True)
 
     def test_step(
         self,
@@ -357,16 +358,10 @@ class PTGLitModule(LightningModule):
         # update and log metrics
         self.test_loss(loss)
         self.test_acc(preds, targets[:, -1])
-        self.test_f1(preds, targets[:, -1])
-        self.test_recall(preds, targets[:, -1])
-        self.test_precision(preds, targets[:, -1])
         self.log(
             "test/loss", self.test_loss, on_step=False, on_epoch=True, prog_bar=True
         )
         self.log("test/acc", self.test_acc, on_step=False, on_epoch=True, prog_bar=True)
-        self.log("test/f1", self.test_f1, on_step=False, on_epoch=True, prog_bar=True)
-        self.log("test/recall", self.test_recall, on_step=False, on_epoch=True, prog_bar=True)
-        self.log("test/precision", self.test_precision, on_step=False, on_epoch=True, prog_bar=True)
 
         # Only retain the truth and source vid/frame IDs for the final window
         # frame as this is the ultimately relevant result.
@@ -378,6 +373,18 @@ class PTGLitModule(LightningModule):
             "source_vid": source_vid[:, -1],
             "source_frame": source_frame[:, -1],
         }
+
+    def test_epoch_end(self, outputs: Union[EPOCH_OUTPUT, List[EPOCH_OUTPUT]]) -> None:
+        all_preds = torch.cat([o['preds'] for o in outputs])
+        all_targets = torch.cat([o['targets'] for o in outputs])
+
+        # update and log metrics
+        self.test_f1(all_preds, all_targets)
+        self.test_recall(all_preds, all_targets)
+        self.test_precision(all_preds, all_targets)
+        self.log("test/f1", self.test_f1, on_step=False, on_epoch=True, prog_bar=True)
+        self.log("test/recall", self.test_recall, on_step=False, on_epoch=True, prog_bar=True)
+        self.log("test/precision", self.test_precision, on_step=False, on_epoch=True, prog_bar=True)
 
     def setup(self, stage: Optional[str] = None) -> None:
         """Lightning hook that is called at the beginning of fit (train + validate), validate,
