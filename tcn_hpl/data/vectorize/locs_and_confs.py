@@ -98,6 +98,9 @@ class LocsAndConfs(Vectorize):
 
         vector_len = self.determine_vector_length(data)
         frame_feat = np.zeros(vector_len, dtype=np.float32)
+        # TODO: instead of carrying around this vector_ind, we should
+        # directly compute the offset of each feature we add to the TCN
+        # input vector. This would be much easier to debug.
         vector_ind = 0
         if self._use_pixel_norm:
             W = data.size[0]
@@ -109,6 +112,7 @@ class LocsAndConfs(Vectorize):
 
         # Loop through all classes: populate obj conf, obj X, obj Y.
         # Assumption: class labels are [0, 1, 2,... num_classes-1].
+        # TODO: this will break if top_k is ever > 1. Fix that.
         for obj_ind in range(0,self._num_classes):
             top_k_idxs = self.get_top_k_indexes_of_one_obj_type(f_dets, self._top_k, obj_ind)
             if top_k_idxs: # This is None if there were no detections to sort for this class
