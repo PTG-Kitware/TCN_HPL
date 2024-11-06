@@ -81,6 +81,9 @@ class PlotMetrics(Callback):
     """
     Various on-stage-end plotting functionalities.
 
+    This will currently only work with training a PTGLitModule due to metric
+    access.
+
     Args:
         output_dir:
             Directory into which to output plots.
@@ -160,6 +163,8 @@ class PlotMetrics(Callback):
         all_source_frames = torch.cat(self._train_all_source_frames)  # shape: #frames
 
         current_epoch = pl_module.current_epoch
+        curr_acc = pl_module.train_acc.compute()
+        curr_f1 = pl_module.train_f1.compute()
 
         class_ids = np.arange(all_probs.shape[-1])
         num_classes = len(class_ids)
@@ -194,7 +199,7 @@ class PlotMetrics(Callback):
         # labels, title and ticks
         ax.set_xlabel("Predicted labels")
         ax.set_ylabel("True labels")
-        ax.set_title(f"CM Training Epoch {current_epoch}")
+        ax.set_title(f"CM Training Epoch {current_epoch}, Accuracy: {curr_acc:.4f}, F1: {curr_f1:.4f}")
         ax.xaxis.set_ticklabels(class_ids, rotation=25)
         ax.yaxis.set_ticklabels(class_ids, rotation=0)
 
@@ -202,7 +207,7 @@ class PlotMetrics(Callback):
             pl_module.logger.experiment.track(Image(fig), name=f"CM Training Epoch")
 
         fig.savefig(
-            self.output_dir / f"confusion_mat_train_epoch{current_epoch:04d}.jpg",
+            self.output_dir / f"confusion_mat_train_epoch{current_epoch:04d}_acc_{curr_acc:.4f}_f1_{curr_f1:.4f}.jpg",
             pad_inches=5,
         )
 
@@ -249,6 +254,7 @@ class PlotMetrics(Callback):
         current_epoch = pl_module.current_epoch
         curr_acc = pl_module.val_acc.compute()
         best_acc = pl_module.val_acc_best.compute()
+        curr_f1 = pl_module.val_f1.compute()
 
         class_ids = np.arange(all_probs.shape[-1])
         num_classes = len(class_ids)
@@ -283,7 +289,7 @@ class PlotMetrics(Callback):
         # labels, title and ticks
         ax.set_xlabel("Predicted labels")
         ax.set_ylabel("True labels")
-        ax.set_title(f"CM Validation Epoch {current_epoch}, Accuracy: {curr_acc:.4f}")
+        ax.set_title(f"CM Validation Epoch {current_epoch}, Accuracy: {curr_acc:.4f}, F1: {curr_f1:.4f}")
         ax.xaxis.set_ticklabels(class_ids, rotation=25)
         ax.yaxis.set_ticklabels(class_ids, rotation=0)
 
@@ -293,7 +299,7 @@ class PlotMetrics(Callback):
         if curr_acc >= best_acc:
             fig.savefig(
                 self.output_dir
-                / f"confusion_mat_val_epoch{current_epoch:04d}_acc_{curr_acc:.4f}.jpg",
+                / f"confusion_mat_val_epoch{current_epoch:04d}_acc_{curr_acc:.4f}_f1_{curr_f1:.4f}.jpg",
                 pad_inches=5,
             )
 
@@ -339,6 +345,8 @@ class PlotMetrics(Callback):
         all_source_frames = torch.cat(self._val_all_source_frames)  # shape: #frames
 
         current_epoch = pl_module.current_epoch
+        test_acc = pl_module.test_acc.compute()
+        test_f1 = pl_module.test_f1.compute()
 
         class_ids = np.arange(all_probs.shape[-1])
         num_classes = len(class_ids)
@@ -377,13 +385,12 @@ class PlotMetrics(Callback):
         # labels, title and ticks
         ax.set_xlabel("Predicted labels")
         ax.set_ylabel("True labels")
-        ax.set_title(f"CM Test Epoch {current_epoch}")
+        ax.set_title(f"CM Test Epoch {current_epoch}, Accuracy: {test_acc:.4f}, F1: {test_f1:.4f}")
         ax.xaxis.set_ticklabels(class_ids, rotation=25)
         ax.yaxis.set_ticklabels(class_ids, rotation=0)
 
-        test_acc = pl_module.test_acc.compute()
         fig.savefig(
-            self.output_dir / f"confusion_mat_test_acc_{test_acc:0.2f}.jpg",
+            self.output_dir / f"confusion_mat_test_acc_{test_acc:0.2f}_f1_{test_f1:.4f}.jpg",
             pad_inches=5,
         )
 
