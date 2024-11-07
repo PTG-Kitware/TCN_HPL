@@ -513,7 +513,7 @@ def test_dataset_for_input(
         top_k = 1,
         num_classes = 7,
         use_joint_confs = True,
-        use_pixel_norm = True,
+        use_pixel_norm = False,
         use_joint_obj_offsets = False,
         background_idx = 0,
     )
@@ -554,7 +554,7 @@ def test_dataset_for_input(
 
     # Test that we can iterate over the dataset using a DataLoader with
     # shuffling.
-    batch_size = 1 # 16384  # 512  # 16
+    batch_size = 32  # 512
     data_loader = DataLoader(
         dataset,
         batch_size=batch_size,
@@ -576,7 +576,11 @@ def test_dataset_for_input(
     logger.info(f"Windows per-second: {count / duration}")
 
     # Test creating online mode with subset of data from above.
-    dset_online = TCNDataset(window_size=window_size, vectorize=vectorize)
+    dset_online = TCNDataset(
+        window_size=window_size,
+        vectorize=vectorize,
+        transform_frame_data=transform_frame_data,
+    )
     dset_online.load_data_online(dataset._frame_data[:window_size])  # noqa
     assert len(dset_online) == 1, "Online dataset should be size 1"
     _ = dset_online[0]
@@ -587,11 +591,13 @@ def test_dataset_for_input(
     except IndexError:
         failed_index_error = False
     assert not failed_index_error, "Should have had an index error at [1]"
-    assert (  # noqa
-        dataset[0][0] == dset_online[0][0]
-    ).all(), (
-        "Online should have produced same window matrix as offline version."
-    )
+    # With augmentation, this can no longer be expected because of random
+    # variation per access.
+    # assert (  # noqa
+    #     dataset[0][0] == dset_online[0][0]
+    # ).all(), (
+    #     "Online should have produced same window matrix as offline version."
+    # )
 
 
 if __name__ == "__main__":
