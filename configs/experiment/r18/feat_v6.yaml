@@ -58,14 +58,19 @@ data:
   coco_test_objects: "${paths.coco_file_root}/TEST-object_detections.coco.json"
   coco_test_poses: "${paths.coco_file_root}/TEST-pose_estimations.coco.json"
 
-  batch_size: 16384
+  # Lower batch size than previously now that we are augmenting and cannot have
+  # window vectorization cached. This value provided for a good balance of
+  # maximizing CPU load with GPU load averages (16 cores, ~14 load avg., ~80%
+  # GPU utilization, ~10.35 GB VRAM).
+  batch_size: 56
   num_workers: 16
   target_framerate: 15  # BBN Hololens2 Framerate
+  # This is a little more than the number of windows in the training dataset.
   epoch_length: 80000
 
   train_dataset:
     window_size: 25
-    vectorizer:
+    vectorize:
       _target_: tcn_hpl.data.vectorize.classic.Classic
       feat_version: 6
       top_k: 1
@@ -73,26 +78,25 @@ data:
       background_idx: 0
       hand_left_idx: 5
       hand_right_idx: 6
-    transform:
-      transforms: []  # no transforms
-#        - _target_: tcn_hpl.data.components.augmentations.MoveCenterPts
-#          hand_dist_delta: 0.05
-#          obj_dist_delta: 0.05
-#          joint_dist_delta: 0.025
-#          im_w: 1280
-#          im_h: 720
-#          num_obj_classes: 42
-#          feat_version: 2
-#          top_k_objects: 1
-#        - _target_: tcn_hpl.data.components.augmentations.NormalizePixelPts
-#          im_w: 1280
-#          im_h: 720
-#          num_obj_classes: 42
-#          feat_version: 2
-#          top_k_objects: 1
+    # Augmentations on windows of frame data before performing vectorization.
+    transform_frame_data:
+      transforms:
+        - _target_: tcn_hpl.data.frame_data_aug.window_frame_dropout.DropoutFrameDataTransform
+          # These parameters are a fudge for now to experiment. Window presence
+          # looks qualitatively right with what we're seeing live.
+          frame_rate: ${data.target_framerate}
+          dets_throughput_mean: 14.5
+          pose_throughput_mean: 10
+          dets_latency: 0
+          pose_latency: 0.1
+          dets_throughput_std: 0.2
+          pose_throughput_std: 0.2
   val_dataset:
-    transform:
-      transforms: []  # no transforms
+    # Augmentations on windows of frame data before performing vectorization.
+    # Sharing transform with training dataset as it is only the drop-out aug to
+    # simulate stream processing dropout the same.
+    transform_frame_data: ${data.train_dataset.transform_frame_data}
+#      transforms: []  # no transforms
 #        - _target_: tcn_hpl.data.components.augmentations.NormalizePixelPts
 #          im_w: 1280
 #          im_h: 720
@@ -104,7 +108,7 @@ data:
 
 paths:
   # root_dir: "/data/PTG/medical/training/activity_classifier/TCN_HPL/"
-  root_dir: "/data/paul.tunison/data/darpa-ptg/train-TCN-R18_bbn_hololens-yolo_v7-mmpose"
+  root_dir: "/data/paul.tunison/data/darpa-ptg/train-TCN-R18_bbn_hololens-yolo_v7-mmpose-window_dropout"
 
   # Convenience variable to where your train/val/test split COCO file datasets
   # are stored.

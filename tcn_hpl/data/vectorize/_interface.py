@@ -6,7 +6,7 @@ import numpy as np
 import numpy.typing as npt
 from pytorch_lightning.utilities.parsing import collect_init_args
 
-from ._data import FrameData
+from tcn_hpl.data.frame_data import FrameData
 
 
 __all__ = [

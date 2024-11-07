@@ -1,13 +1,10 @@
 from collections import defaultdict
 from pathlib import Path
-import typing as ty
 from typing import Any, Dict, Optional, Tuple
 
-import kwcoco
 import matplotlib.pyplot as plt
 import numpy as np
 import pytorch_lightning as pl
-from debugpy.common.timestamp import current
 from pytorch_lightning.callbacks import Callback
 import seaborn as sns
 from pytorch_lightning.utilities.types import STEP_OUTPUT
@@ -20,19 +17,50 @@ except ImportError:
     Image = None
 
 
+def create_video_frame_gt_preds(
+    all_targets: torch.Tensor,
+    all_preds: torch.Tensor,
+    all_source_vids: torch.Tensor,
+    all_source_frames: torch.Tensor,
+) -> Dict[int, Dict[int, Tuple[int, int]]]:
+    """
+    Create a two-layer mapping from video ID to frame ID to pair of (gt, pred)
+    class IDs.
+
+    :param all_targets: Tensor of all target window class IDs.
+    :param all_preds: Tensor of all predicted window class IDs.
+    :param all_source_vids: Tensor of video IDs for the window.
+    :param all_source_frames: Tensor of video frame number for the final
+        frame of windows.
+
+    :return: New mapping.
+    """
+    per_video_frame_gt_preds = defaultdict(dict)
+    for (gt, pred, source_vid, source_frame) in zip(
+        all_targets, all_preds, all_source_vids, all_source_frames
+    ):
+        per_video_frame_gt_preds[source_vid.item()][source_frame.item()] = (gt.item(), pred.item())
+    return per_video_frame_gt_preds
+
+
 def plot_gt_vs_preds(
     output_dir: Path,
-    per_video_frame_gt_preds: ty.Dict[ty.Any, ty.Dict[int, ty.Tuple[int, int]]],
+    per_video_frame_gt_preds: Dict[int, Dict[int, Tuple[int, int]]],
+    epoch: int,
     split="train",
-    max_items=30,
+    max_items=np.inf,
 ) -> None:
     """
     Plot activity classification truth and predictions through the course of a
     video's frames as lines.
 
+    Successive calls to this function will overwrite any images in the given
+    output directory for the given split.
+
     :param output_dir: Base directory into which to save plots.
     :param per_video_frame_gt_preds: Mapping of video-to-frames-to-tuple, where
         the tuple is the (gt, pred) pair of class IDs for the respective frame.
+    :param epoch: The current epoch number for the plot title.
     :param split: Which train/val/test split the input is for. This will
         influence the names of files generated.
     :param max_items: Only consider the first N videos in the given
@@ -63,7 +91,7 @@ def plot_gt_vs_preds(
             label="Pred",
             ax=ax,
         ).set(
-            title=f"{split} Step Prediction Per Frame",
+            title=f"{split} Step Prediction Per Frame (Epoch {epoch})",
             xlabel="Index",
             ylabel="Step",
         )
@@ -74,12 +102,15 @@ def plot_gt_vs_preds(
         root_dir.mkdir(parents=True, exist_ok=True)
 
         fig.savefig(root_dir / f"{split}_vid{video:03d}.jpg", pad_inches=5)
-        plt.close()
+        plt.close(fig)
 
 
 class PlotMetrics(Callback):
     """
     Various on-stage-end plotting functionalities.
+
+    This will currently only work with training a PTGLitModule due to metric
+    access.
 
     Args:
         output_dir:
@@ -116,23 +147,6 @@ class PlotMetrics(Callback):
         # care for plotting outputs for.
         self._has_begun_training = False
 
-        # self.topic = topic
-        #
-        # # Get Action Names
-        # mapping_file = f"{self.hparams.data_dir}/{mapping_file_name}"
-        # actions_dict = dict()
-        # with open(mapping_file, "r") as file_ptr:
-        #     actions = file_ptr.readlines()
-        #     actions = [a.strip() for a in actions]  # drop leading/trailing whitespace
-        #     for a in actions:
-        #         parts = a.split()  # split on any number of whitespace
-        #         actions_dict[parts[1]] = int(parts[0])
-        #
-        # self.class_ids = list(actions_dict.values())
-        # self.classes = list(actions_dict.keys())
-        #
-        # self.action_id_to_str = dict(zip(self.class_ids, self.classes))
-
     def on_train_batch_end(
         self,
         trainer: "pl.Trainer",
@@ -160,26 +174,29 @@ class PlotMetrics(Callback):
         all_source_frames = torch.cat(self._train_all_source_frames)  # shape: #frames
 
         current_epoch = pl_module.current_epoch
-
-        class_ids = np.arange(all_probs.shape[-1])
-        num_classes = len(class_ids)
+        curr_acc = pl_module.train_acc.compute()
+        curr_f1 = pl_module.train_f1.compute()
 
         #
         # Plot per-video class predictions vs. GT across progressive frames in
         # that video.
         #
-        # Build up mapping of truth to preds for each video
-        per_video_frame_gt_preds = defaultdict(dict)
-        for (gt, pred, prob, source_vid, source_frame) in zip(
-            all_targets, all_preds, all_probs, all_source_vids, all_source_frames
-        ):
-            per_video_frame_gt_preds[source_vid][source_frame] = (int(gt), int(pred))
-
-        plot_gt_vs_preds(self.output_dir, per_video_frame_gt_preds, split="train")
+        plot_gt_vs_preds(
+            self.output_dir,
+            create_video_frame_gt_preds(
+                all_targets,
+                all_preds,
+                all_source_vids,
+                all_source_frames
+            ),
+            epoch=current_epoch,
+            split="train",
+        )
 
         #
         # Create confusion matrix
         #
+        class_ids = np.arange(all_probs.shape[-1])
         cm = confusion_matrix(
             all_targets.cpu().numpy(),
             all_preds.cpu().numpy(),
@@ -187,6 +204,7 @@ class PlotMetrics(Callback):
             normalize="true",
         )
 
+        num_classes = len(class_ids)
         fig, ax = plt.subplots(figsize=(num_classes, num_classes))
 
         sns.heatmap(cm, annot=True, ax=ax, fmt=".2f", linewidth=0.5, vmin=0, vmax=1)
@@ -194,7 +212,7 @@ class PlotMetrics(Callback):
         # labels, title and ticks
         ax.set_xlabel("Predicted labels")
         ax.set_ylabel("True labels")
-        ax.set_title(f"CM Training Epoch {current_epoch}")
+        ax.set_title(f"CM Training Epoch {current_epoch}, Accuracy: {curr_acc:.4f}, F1: {curr_f1:.4f}")
         ax.xaxis.set_ticklabels(class_ids, rotation=25)
         ax.yaxis.set_ticklabels(class_ids, rotation=0)
 
@@ -202,7 +220,7 @@ class PlotMetrics(Callback):
             pl_module.logger.experiment.track(Image(fig), name=f"CM Training Epoch")
 
         fig.savefig(
-            self.output_dir / f"confusion_mat_train_epoch{current_epoch:04d}.jpg",
+            self.output_dir / f"confusion_mat_train_epoch{current_epoch:04d}_acc_{curr_acc:.4f}_f1_{curr_f1:.4f}.jpg",
             pad_inches=5,
         )
 
@@ -248,27 +266,13 @@ class PlotMetrics(Callback):
 
         current_epoch = pl_module.current_epoch
         curr_acc = pl_module.val_acc.compute()
-        best_acc = pl_module.val_acc_best.compute()
-
-        class_ids = np.arange(all_probs.shape[-1])
-        num_classes = len(class_ids)
-
-        #
-        # Plot per-video class predictions vs. GT across progressive frames in
-        # that video.
-        #
-        # Build up mapping of truth to preds for each video
-        per_video_frame_gt_preds = defaultdict(dict)
-        for (gt, pred, prob, source_vid, source_frame) in zip(
-            all_targets, all_preds, all_probs, all_source_vids, all_source_frames
-        ):
-            per_video_frame_gt_preds[source_vid][source_frame] = (int(gt), int(pred))
-
-        plot_gt_vs_preds(self.output_dir, per_video_frame_gt_preds, split="validation")
+        curr_f1 = pl_module.val_f1.compute()
+        best_f1 = pl_module.val_f1_best.compute()
 
         #
         # Create confusion matrix
         #
+        class_ids = np.arange(all_probs.shape[-1])
         cm = confusion_matrix(
             all_targets.numpy(),
             all_preds.numpy(),
@@ -276,6 +280,7 @@ class PlotMetrics(Callback):
             normalize="true",
         )
 
+        num_classes = len(class_ids)
         fig, ax = plt.subplots(figsize=(num_classes, num_classes))
 
         sns.heatmap(cm, annot=True, ax=ax, fmt=".2f", linewidth=0.5, vmin=0, vmax=1)
@@ -283,18 +288,33 @@ class PlotMetrics(Callback):
         # labels, title and ticks
         ax.set_xlabel("Predicted labels")
         ax.set_ylabel("True labels")
-        ax.set_title(f"CM Validation Epoch {current_epoch}, Accuracy: {curr_acc:.4f}")
+        ax.set_title(f"CM Validation Epoch {current_epoch}, Accuracy: {curr_acc:.4f}, F1: {curr_f1:.4f}")
         ax.xaxis.set_ticklabels(class_ids, rotation=25)
         ax.yaxis.set_ticklabels(class_ids, rotation=0)
 
         if Image is not None:
             pl_module.logger.experiment.track(Image(fig), name=f"CM Validation Epoch")
 
-        if curr_acc >= best_acc:
+        if curr_f1 >= best_f1:
             fig.savefig(
                 self.output_dir
-                / f"confusion_mat_val_epoch{current_epoch:04d}_acc_{curr_acc:.4f}.jpg",
+                / f"confusion_mat_val_epoch{current_epoch:04d}_acc_{curr_acc:.4f}_f1_{curr_f1:.4f}.jpg",
                 pad_inches=5,
+            )
+            #
+            # Plot per-video class predictions vs. GT across progressive frames in
+            # that video.
+            #
+            plot_gt_vs_preds(
+                self.output_dir,
+                create_video_frame_gt_preds(
+                    all_targets,
+                    all_preds,
+                    all_source_vids,
+                    all_source_frames
+                ),
+                epoch=current_epoch,
+                split="validation",
             )
 
         plt.close(fig)
@@ -339,22 +359,24 @@ class PlotMetrics(Callback):
         all_source_frames = torch.cat(self._val_all_source_frames)  # shape: #frames
 
         current_epoch = pl_module.current_epoch
-
-        class_ids = np.arange(all_probs.shape[-1])
-        num_classes = len(class_ids)
+        test_acc = pl_module.test_acc.compute()
+        test_f1 = pl_module.test_f1.compute()
 
         #
         # Plot per-video class predictions vs. GT across progressive frames in
         # that video.
         #
-        # Build up mapping of truth to preds for each video
-        per_video_frame_gt_preds = defaultdict(dict)
-        for (gt, pred, prob, source_vid, source_frame) in zip(
-            all_targets, all_preds, all_probs, all_source_vids, all_source_frames
-        ):
-            per_video_frame_gt_preds[source_vid][source_frame] = (int(gt), int(pred))
-
-        plot_gt_vs_preds(self.output_dir, per_video_frame_gt_preds, split="test")
+        plot_gt_vs_preds(
+            self.output_dir,
+            create_video_frame_gt_preds(
+                all_targets,
+                all_preds,
+                all_source_vids,
+                all_source_frames
+            ),
+            epoch=current_epoch,
+            split="test",
+        )
 
         # Built a COCO dataset of test results to output.
         # TODO: Configure activity test COCO file as input.
@@ -363,6 +385,7 @@ class PlotMetrics(Callback):
         #
         # Create confusion matrix
         #
+        class_ids = np.arange(all_probs.shape[-1])
         cm = confusion_matrix(
             all_targets.cpu().numpy(),
             all_preds.cpu().numpy(),
@@ -370,20 +393,20 @@ class PlotMetrics(Callback):
             normalize="true",
         )
 
+        num_classes = len(class_ids)
         fig, ax = plt.subplots(figsize=(num_classes, num_classes))
 
-        sns.heatmap(cm, annot=True, ax=ax, fmt=".2f", vmin=0, vmax=1)
+        sns.heatmap(cm, annot=True, ax=ax, fmt=".2f", linewidth=0.5, vmin=0, vmax=1)
 
         # labels, title and ticks
         ax.set_xlabel("Predicted labels")
         ax.set_ylabel("True labels")
-        ax.set_title(f"CM Test Epoch {current_epoch}")
+        ax.set_title(f"CM Test Epoch {current_epoch}, Accuracy: {test_acc:.4f}, F1: {test_f1:.4f}")
         ax.xaxis.set_ticklabels(class_ids, rotation=25)
         ax.yaxis.set_ticklabels(class_ids, rotation=0)
 
-        test_acc = pl_module.test_acc.compute()
         fig.savefig(
-            self.output_dir / f"confusion_mat_test_acc_{test_acc:0.2f}.jpg",
+            self.output_dir / f"confusion_mat_test_acc_{test_acc:0.2f}_f1_{test_f1:.4f}.jpg",
             pad_inches=5,
         )
 

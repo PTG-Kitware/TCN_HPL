@@ -87,25 +87,34 @@ class PTGLitModule(LightningModule):
             task="multiclass", average="weighted", num_classes=num_classes
         )
 
+        self.train_f1 = F1Score(
+            num_classes=num_classes, average="weighted", task="multiclass"
+        )
         self.val_f1 = F1Score(
-            num_classes=num_classes, average="none", task="multiclass"
+            num_classes=num_classes, average="weighted", task="multiclass"
         )
         self.test_f1 = F1Score(
-            num_classes=num_classes, average="none", task="multiclass"
+            num_classes=num_classes, average="weighted", task="multiclass"
         )
 
+        self.train_recall = Recall(
+            num_classes=num_classes, average="weighted", task="multiclass"
+        )
         self.val_recall = Recall(
-            num_classes=num_classes, average="none", task="multiclass"
+            num_classes=num_classes, average="weighted", task="multiclass"
         )
         self.test_recall = Recall(
-            num_classes=num_classes, average="none", task="multiclass"
+            num_classes=num_classes, average="weighted", task="multiclass"
         )
 
+        self.train_precision = Precision(
+            num_classes=num_classes, average="weighted", task="multiclass"
+        )
         self.val_precision = Precision(
-            num_classes=num_classes, average="none", task="multiclass"
+            num_classes=num_classes, average="weighted", task="multiclass"
         )
         self.test_precision = Precision(
-            num_classes=num_classes, average="none", task="multiclass"
+            num_classes=num_classes, average="weighted", task="multiclass"
         )
 
         # for averaging loss across batches
@@ -114,20 +123,7 @@ class PTGLitModule(LightningModule):
         self.test_loss = MeanMetric()
 
         # for tracking best so far validation accuracy
-        self.val_acc_best = MaxMetric()
-        self.train_acc_best = MaxMetric()
-
-        self.validation_step_outputs_prob = []
-        self.validation_step_outputs_pred = []
-        self.validation_step_outputs_target = []
-        self.validation_step_outputs_source_vid = []
-        self.validation_step_outputs_source_frame = []
-
-        self.training_step_outputs_target = []
-        self.training_step_outputs_source_vid = []
-        self.training_step_outputs_source_frame = []
-        self.training_step_outputs_pred = []
-        self.training_step_outputs_prob = []
+        self.val_f1_best = MaxMetric()
 
     def forward(self, x: torch.Tensor, m: torch.Tensor) -> torch.Tensor:
         """Perform a forward pass through the model `self.net`.
@@ -144,13 +140,16 @@ class PTGLitModule(LightningModule):
         # so it's worth to make sure validation metrics don't store results from these checks
         self.val_loss.reset()
         self.val_acc.reset()
-        self.val_acc_best.reset()
+        self.val_f1.reset()
+        self.val_recall.reset()
+        self.val_precision.reset()
+        self.val_f1_best.reset()
 
     def compute_loss(self, p, y, mask):
         """Compute the total loss for a batch
 
         :param p: The prediction
-        :param batch_target: The target labels
+        :param y: The target labels
         :param mask: Marks valid input data
 
         :return: The loss
@@ -280,6 +279,17 @@ class PTGLitModule(LightningModule):
             "source_frame": source_frame[:, -1],
         }
 
+    def training_epoch_end(self, outputs: EPOCH_OUTPUT) -> None:
+        all_preds = torch.cat([o["preds"] for o in outputs])
+        all_targets = torch.cat([o['targets'] for o in outputs])
+
+        self.train_f1(all_preds, all_targets)
+        self.train_recall(all_preds, all_targets)
+        self.train_precision(all_preds, all_targets)
+        self.log("train/f1", self.train_f1, prog_bar=True, on_epoch=True)
+        self.log("train/recall", self.train_recall, prog_bar=True, on_epoch=True)
+        self.log("train/precision", self.train_precision, prog_bar=True, on_epoch=True)
+
     def validation_step(
         self,
         batch: Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
@@ -313,58 +323,22 @@ class PTGLitModule(LightningModule):
             "source_frame": source_frame[:, -1],
         }
 
-        # Why is this stage specifically only using these special index
-        # conditions?
-        # # print(f"preds: {preds.shape}, targets: {targets.shape}")
-        # # print(f"mask: {mask.shape}, {mask[0,:]}")
-        # ys = targets[:, -1]
-        # # print(f"y: {ys.shape}")
-        # # print(f"y: {ys}")
-        # windowed_preds, windowed_ys = [], []
-        # window_size = 15
-        # center = 7
-        # inds = []
-        # for i in range(preds.shape[0] - window_size + 1):
-        #     y = ys[i : i + window_size].tolist()
-        #     # print(f"y: {y}")
-        #     # print(f"len of set: {len(list(set(y)))}")
-        #     if len(list(set(y))) == 1:
-        #         inds.append(i + center - 1)
-        #         windowed_preds.append(preds[i + center - 1])
-        #         windowed_ys.append(ys[i + center - 1])
-        #
-        # windowed_preds = torch.tensor(windowed_preds).to(targets)
-        # windowed_ys = torch.tensor(windowed_ys).to(targets)
-        #
-        # self.validation_step_outputs_target.append(targets[inds, -1])
-        # self.validation_step_outputs_source_vid.append(source_vid[inds, -1])
-        # self.validation_step_outputs_source_frame.append(source_frame[inds, -1])
-        # self.validation_step_outputs_pred.append(preds[inds])
-        # self.validation_step_outputs_prob.append(probs[inds])
-
     def validation_epoch_end(self, outputs: Union[EPOCH_OUTPUT, List[EPOCH_OUTPUT]]) -> None:
         all_preds = torch.cat([o['preds'] for o in outputs])
         all_targets = torch.cat([o['targets'] for o in outputs])
 
-        acc = self.val_acc.compute()
-        current_best_val_acc = self.val_acc_best.value
-        # log `val_acc_best` as a value through `.compute()` return, instead of
+        self.val_f1(all_preds, all_targets)
+        self.val_recall(all_preds, all_targets)
+        self.val_precision(all_preds, all_targets)
+        self.log("val/f1", self.val_f1, prog_bar=True, on_epoch=True)
+        self.log("val/recall", self.val_recall, prog_bar=True, on_epoch=True)
+        self.log("val/precision", self.val_precision, prog_bar=True, on_epoch=True)
+
+        # log `val_f1_best` as a value through `.compute()` return, instead of
         # as a metric object otherwise metric would be reset by lightning after
         # each epoch.
-        best_val_acc = self.val_acc_best(acc)  # update best so far val acc
-
-        if best_val_acc > current_best_val_acc:
-            val_f1_score = self.val_f1(all_preds, all_targets)
-            val_recall_score = self.val_recall(all_preds, all_targets)
-            val_precision_score = self.val_precision(all_preds, all_targets)
-
-            # print(f"preds: {all_preds}")
-            # print(f"all_targets: {all_targets}")
-            print(f"validation f1 score: {val_f1_score}")
-            print(f"validation recall score: {val_recall_score}")
-            print(f"validation precision score: {val_precision_score}")
-
-        self.log("val/acc_best", best_val_acc, sync_dist=True, prog_bar=True)
+        self.val_f1_best(self.val_f1.compute())
+        self.log("val/f1_best", self.val_f1_best.compute(), prog_bar=True, on_epoch=True)
 
     def test_step(
         self,
@@ -389,12 +363,6 @@ class PTGLitModule(LightningModule):
         )
         self.log("test/acc", self.test_acc, on_step=False, on_epoch=True, prog_bar=True)
 
-        self.validation_step_outputs_target.append(targets[:, -1])
-        self.validation_step_outputs_source_vid.append(source_vid[:, -1])
-        self.validation_step_outputs_source_frame.append(source_frame[:, -1])
-        self.validation_step_outputs_pred.append(preds)
-        self.validation_step_outputs_prob.append(probs)
-
         # Only retain the truth and source vid/frame IDs for the final window
         # frame as this is the ultimately relevant result.
         return {
@@ -405,6 +373,18 @@ class PTGLitModule(LightningModule):
             "source_vid": source_vid[:, -1],
             "source_frame": source_frame[:, -1],
         }
+
+    def test_epoch_end(self, outputs: Union[EPOCH_OUTPUT, List[EPOCH_OUTPUT]]) -> None:
+        all_preds = torch.cat([o['preds'] for o in outputs])
+        all_targets = torch.cat([o['targets'] for o in outputs])
+
+        # update and log metrics
+        self.test_f1(all_preds, all_targets)
+        self.test_recall(all_preds, all_targets)
+        self.test_precision(all_preds, all_targets)
+        self.log("test/f1", self.test_f1, on_step=False, on_epoch=True, prog_bar=True)
+        self.log("test/recall", self.test_recall, on_step=False, on_epoch=True, prog_bar=True)
+        self.log("test/precision", self.test_precision, on_step=False, on_epoch=True, prog_bar=True)
 
     def setup(self, stage: Optional[str] = None) -> None:
         """Lightning hook that is called at the beginning of fit (train + validate), validate,
