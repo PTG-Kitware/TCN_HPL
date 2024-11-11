@@ -38,7 +38,10 @@ smoothing_loss: 0.0015
 use_smoothing_loss: False
 
 # Number of classes
-num_classes: ${data.num_classes}
+num_classes: 9
 
 # compile model for faster training with pytorch 2.0
 compile: false
+
+# Which frame in a window of predictions should represent the while window.
+pred_frame_index: -1

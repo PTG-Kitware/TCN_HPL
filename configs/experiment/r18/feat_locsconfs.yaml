@@ -1,10 +1,5 @@
 # @package _global_
 
-# to execute this experiment run:
-# python train.py experiment=example
-topic: "medical"
-task: "r18"
-
 defaults:
   - override /data: ptg
   - override /model: ptg
@@ -67,11 +62,14 @@ data:
   batch_size: 512
   num_workers: 16
   target_framerate: 15  # BBN Hololens2 Framerate
-  # This is a little more than the number of windows in the training dataset.
-  epoch_length: 80000
+  # This is a bit more than the number of windows in the training dataset so
+  # the weighted sampler has more of an opportunity to sample the space
+  # proportionally.
+  epoch_length: 300000
 
   train_dataset:
     window_size: 25
+    window_label_idx: ${model.pred_frame_index}
     vectorize:
       _target_: tcn_hpl.data.vectorize.locs_and_confs.LocsAndConfs
       top_k: 1

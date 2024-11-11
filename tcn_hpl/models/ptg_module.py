@@ -56,6 +56,7 @@ class PTGLitModule(LightningModule):
         use_smoothing_loss: bool,
         num_classes: int,
         compile: bool,
+        pred_frame_index: int = -1,
     ) -> None:
         """Initialize a `PTGLitModule`.
 
@@ -63,6 +64,11 @@ class PTGLitModule(LightningModule):
         :param criterion: Loss Computation
         :param optimizer: The optimizer to use for training.
         :param scheduler: The learning rate scheduler to use for training.
+        :param pred_frame_index:
+            Index of a frame in the window whose predicted class and
+            probabilities should represent the window as a whole. Negative
+            indices are valid. Must be a valid index into the window range
+            specified by the dataset
         """
         super().__init__()
 
@@ -235,10 +241,11 @@ class PTGLitModule(LightningModule):
             for p in logits:
                 loss += self.compute_loss(p, y, m)
 
+        pred_frame_index = self.hparams.pred_frame_index
         probs = torch.softmax(
-            logits[-1, :, :, -1], dim=1
+            logits[-1, :, :, pred_frame_index], dim=1
         )  # shape (batch size, self.hparams.num_classes)
-        preds = torch.argmax(logits[-1, :, :, -1], dim=1)  # shape: batch size
+        preds = torch.argmax(logits[-1, :, :, pred_frame_index], dim=1)  # shape: batch size
 
         return loss, probs, preds, y, source_vid, source_frame
 
@@ -260,7 +267,7 @@ class PTGLitModule(LightningModule):
 
         # update and log metrics
         self.train_loss(loss)
-        self.train_acc(preds, targets[:, -1])
+        self.train_acc(preds, targets[:, self.hparams.pred_frame_index])
 
         self.log(
             "train/loss", self.train_loss, on_step=False, on_epoch=True, prog_bar=True
@@ -274,9 +281,9 @@ class PTGLitModule(LightningModule):
             "loss": loss,
             "preds": preds,
             "probs": probs,
-            "targets": targets[:, -1],
-            "source_vid": source_vid[:, -1],
-            "source_frame": source_frame[:, -1],
+            "targets": targets[:, self.hparams.pred_frame_index],
+            "source_vid": source_vid[:, self.hparams.pred_frame_index],
+            "source_frame": source_frame[:, self.hparams.pred_frame_index],
         }
 
     def training_epoch_end(self, outputs: EPOCH_OUTPUT) -> None:
@@ -307,7 +314,7 @@ class PTGLitModule(LightningModule):
 
         # update and log metrics
         self.val_loss(loss)
-        self.val_acc(preds, targets[:, -1])
+        self.val_acc(preds, targets[:, self.hparams.pred_frame_index])
 
         self.log("val/loss", self.val_loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log("val/acc", self.val_acc, on_step=False, on_epoch=True, prog_bar=True)
@@ -318,9 +325,9 @@ class PTGLitModule(LightningModule):
             "loss": loss,
             "preds": preds,
             "probs": probs,
-            "targets": targets[:, -1],
-            "source_vid": source_vid[:, -1],
-            "source_frame": source_frame[:, -1],
+            "targets": targets[:, self.hparams.pred_frame_index],
+            "source_vid": source_vid[:, self.hparams.pred_frame_index],
+            "source_frame": source_frame[:, self.hparams.pred_frame_index],
         }
 
     def validation_epoch_end(self, outputs: Union[EPOCH_OUTPUT, List[EPOCH_OUTPUT]]) -> None:
@@ -357,7 +364,7 @@ class PTGLitModule(LightningModule):
 
         # update and log metrics
         self.test_loss(loss)
-        self.test_acc(preds, targets[:, -1])
+        self.test_acc(preds, targets[:, self.hparams.pred_frame_index])
         self.log(
             "test/loss", self.test_loss, on_step=False, on_epoch=True, prog_bar=True
         )
@@ -369,9 +376,9 @@ class PTGLitModule(LightningModule):
             "loss": loss,
             "preds": preds,
             "probs": probs,
-            "targets": targets[:, -1],
-            "source_vid": source_vid[:, -1],
-            "source_frame": source_frame[:, -1],
+            "targets": targets[:, self.hparams.pred_frame_index],
+            "source_vid": source_vid[:, self.hparams.pred_frame_index],
+            "source_frame": source_frame[:, self.hparams.pred_frame_index],
         }
 
     def test_epoch_end(self, outputs: Union[EPOCH_OUTPUT, List[EPOCH_OUTPUT]]) -> None:
