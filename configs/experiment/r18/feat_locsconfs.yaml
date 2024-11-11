@@ -2,9 +2,8 @@
 
 # to execute this experiment run:
 # python train.py experiment=example
-task: "m2"
-# feature_version: 6
 topic: "medical"
+task: "r18"
 
 defaults:
   - override /data: ptg
@@ -30,7 +29,7 @@ defaults:
 # simply provide checkpoint path to resume training
 #ckpt_path: null
 
-tags: ["m2", "ms_tcn", "debug"]
+tags: ["r18", "ms_tcn", "debug"]
 
 seed: 12345
 
@@ -40,81 +39,76 @@ trainer:
   log_every_n_steps: 1
 
 model:
+  num_classes: 6  # number of activity classification classes
   compile: false
   net:
     # Length of feature vector for a single frame.
-    # Currently derived from feature version and other hyperparameters.
+    # Currently derived from the parameterization of dataset vectorizer.
     dim: 102
-  num_classes: 9
+
+#    # Once upon a time defaults
+#    num_stages: 4
+#    num_layers: 10
+#    num_f_maps: 64
 
 data:
   coco_train_activities: "${paths.coco_file_root}/TRAIN-activity_truth.coco.json"
   coco_train_objects: "${paths.coco_file_root}/TRAIN-object_detections.coco.json"
-  coco_train_poses: "${paths.coco_file_root}/TRAIN-pose_estimates.coco.json"
+  coco_train_poses: "${paths.coco_file_root}/TRAIN-pose_estimations.coco.json"
 
   coco_validation_activities: "${paths.coco_file_root}/VALIDATION-activity_truth.coco.json"
   coco_validation_objects: "${paths.coco_file_root}/VALIDATION-object_detections.coco.json"
-  coco_validation_poses: "${paths.coco_file_root}/VALIDATION-pose_estimates.coco.json"
+  coco_validation_poses: "${paths.coco_file_root}/VALIDATION-pose_estimations.coco.json"
 
   coco_test_activities: "${paths.coco_file_root}/TEST-activity_truth.coco.json"
   coco_test_objects: "${paths.coco_file_root}/TEST-object_detections.coco.json"
-  coco_test_poses: "${paths.coco_file_root}/TEST-pose_estimates.coco.json"
+  coco_test_poses: "${paths.coco_file_root}/TEST-pose_estimations.coco.json"
 
-  batch_size: 16384
+  batch_size: 512
   num_workers: 16
   target_framerate: 15  # BBN Hololens2 Framerate
-  epoch_length: 200000
+  # This is a little more than the number of windows in the training dataset.
+  epoch_length: 80000
 
   train_dataset:
     window_size: 25
-    vectorizer:
+    vectorize:
       _target_: tcn_hpl.data.vectorize.locs_and_confs.LocsAndConfs
       top_k: 1
       num_classes: 7
       use_joint_confs: True
       use_pixel_norm: True
-      use_hand_obj_offsets: False
+      use_joint_obj_offsets: False
       background_idx: 0
-    transform:
-      transforms: []  # no transforms
-#        - _target_: tcn_hpl.data.components.augmentations.MoveCenterPts
-#          hand_dist_delta: 0.05
-#          obj_dist_delta: 0.05
-#          joint_dist_delta: 0.025
-#          im_w: 1280
-#          im_h: 720
-#          num_obj_classes: 42
-#          feat_version: 2
-#          top_k_objects: 1
-#        - _target_: tcn_hpl.data.components.augmentations.NormalizePixelPts
-#          im_w: 1280
-#          im_h: 720
-#          num_obj_classes: 42
-#          feat_version: 2
-#          top_k_objects: 1
+    # Augmentations on windows of frame data before performing vectorization.
+    transform_frame_data:
+      transforms:
+        - _target_: tcn_hpl.data.frame_data_aug.window_frame_dropout.DropoutFrameDataTransform
+          # These parameters are a fudge for now to experiment. Window presence
+          # looks qualitatively right with what we're seeing live.
+          frame_rate: ${data.target_framerate}
+          dets_throughput_mean: 14.5
+          pose_throughput_mean: 10
+          dets_latency: 0
+          pose_latency: 0.1
+          dets_throughput_std: 0.2
+          pose_throughput_std: 0.2
   val_dataset:
-    transform:
-      transforms: []  # no transforms
-#        - _target_: tcn_hpl.data.components.augmentations.NormalizePixelPts
-#          im_w: 1280
-#          im_h: 720
-#          num_obj_classes: 42
-#          feat_version: 2
-#          top_k_objects: 1
+    # Augmentations on windows of frame data before performing vectorization.
+    # Sharing transform with training dataset as it is only the drop-out aug to
+    # simulate stream processing dropout the same.
+    transform_frame_data: ${data.train_dataset.transform_frame_data}
   # Test dataset usually configured the same as val, unless there is some
   # different set of transforms that should be used during test/prediction.
 
 paths:
-  # root_dir: "/data/PTG/medical/training/activity_classifier/TCN_HPL/"
-  # root_dir: "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens/training_root"
-  root_dir: "/home/local/KHQ/cameron.johnson/code/TCN_HPL/tcn_hpl/train-TCN-M2_bbn_hololens/training_root"
+  # Base directory for training outputs.
+  root_dir: "/data/paul.tunison/data/darpa-ptg/train-TCN-R18_bbn_hololens-yolo_v7-mmpose-window_dropout"
 
   # Convenience variable to where your train/val/test split COCO file datasets
   # are stored.
-  # coco_file_root: "/home/local/KHQ/paul.tunison/data/darpa-ptg/train-TCN-M2_bbn_hololens"
-  coco_file_root: "/home/local/KHQ/cameron.johnson/code/TCN_HPL/train-TCN-M2_bbn_hololens"
+  coco_file_root: ${paths.root_dir}
 
-#exp_name: "tcn_training_revive"
 #logger:
 #  aim:
 #    experiment: ${task_name}

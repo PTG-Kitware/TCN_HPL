@@ -15,13 +15,14 @@ scheduler:
 
 net:
   _target_: tcn_hpl.models.components.ms_tcs_net.MultiStageModel
+  fc_sequence_dims: [512, 1024, 2048]
+  fc_sequence_dropout_p: 0.25
   num_stages: 4
   num_layers: 5
   num_f_maps: 128
   # dim: 204
   dim: 128
   num_classes: ${model.num_classes}
-  window_size: ${data.train_dataset.window_size}
 
 criterion:
   _target_: tcn_hpl.models.components.focal_loss.FocalLoss

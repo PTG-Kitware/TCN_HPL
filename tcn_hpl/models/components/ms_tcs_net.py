@@ -1,31 +1,42 @@
+import copy
+from typing import Sequence
+
+import einops
 import torch
 from torch import nn
 import torch.nn.functional as F
-import copy
-import einops
 
 
 class MultiStageModel(nn.Module):
     def __init__(
         self,
-        num_stages,
-        num_layers,
-        num_f_maps,
-        dim,
-        num_classes,
-        window_size,
+        fc_sequence_dims: Sequence[int],
+        fc_sequence_dropout_p: float,
+        num_stages: int,
+        num_layers: int,
+        num_f_maps: int,
+        dim: int,
+        num_classes: int,
     ):
         """Initialize a `MultiStageModel` module.
 
-        :param num_stages: Nubmer of State Model Layers.
+        :param fc_sequence_dims: Create N*2 linear layers with u-net-like skip
+            connections connecting inputs and outputs of the same dimensions.
+            If an empty sequence is provided, then no FC layers are created
+        :param fc_sequence_dropout_p: P-value for drop-out layers utilized in
+            the FC u-net block.
+        :param num_stages: Number of State Model Layers.
         :param num_layers: Number of Layers within each State Model.
         :param num_f_maps: Feature size within the state model
         :param dim: Feature size between state models.
         :param num_classes: Number of output classes.
         """
         super(MultiStageModel, self).__init__()
+
+        # One FC sequence that is applied to a single frame's feature vector,
+        self.frame_fc = LinearSkipBlock([dim] + list(fc_sequence_dims), fc_sequence_dropout_p)
+
         self.stage1 = SingleStageModel(num_layers, num_f_maps, dim, num_classes)
-        print(f"num classes: {num_classes}")
         self.stages = nn.ModuleList(
             [
                 copy.deepcopy(
@@ -35,31 +46,15 @@ class MultiStageModel(nn.Module):
             ]
         )
 
-        # normalizing network
-        self.fc = nn.Sequential(
-            nn.Linear(dim * window_size, 4096),
-            nn.GELU(),
-            nn.Dropout(0.25),
-            nn.Linear(4096, 8192),
-            nn.Dropout(0.25),
-            nn.Linear(8192, 16384),
-            nn.GELU(),
-            nn.Dropout(0.25),
-            nn.Linear(16384, 8192),
-            nn.GELU(),
-            nn.Dropout(0.25),
-            nn.Linear(8192, 4096),
-            nn.Dropout(0.25),
-            nn.Linear(4096, dim * window_size),
-        )
-
     def forward(self, x, mask):
-        b, d, c = x.shape  # [batch_size, feat_dim, window_size]
+        # x shape: [batch_size, feat_dim, window_size]
         # mask shape: [batch_size, window_size]
 
-        re_x = einops.rearrange(x, "b d c -> b (d c)")
-        re_x = self.fc(re_x)
-        x = einops.rearrange(re_x, "b (d c) -> b d c", d=d, c=c)
+        # Shape [batch_size, window_size, feat_dim]
+        re_x = einops.rearrange(x, "b d w -> b w d")
+        re_x = self.frame_fc(re_x)
+        # Bring it back to input shape [batch_size, feat_dim, window_size]
+        x = einops.rearrange(re_x, "b w d -> b d w")
 
         out = self.stage1(x, mask)
         outputs = out.unsqueeze(0)
@@ -68,6 +63,36 @@ class MultiStageModel(nn.Module):
             outputs = torch.cat((outputs, out.unsqueeze(0)), dim=0)
 
         return outputs
+
+
+class LinearSkipBlock(nn.Module):
+
+    def __init__(self, dims: Sequence[int], dropout_p):
+        """
+        Simple linear skip connection block.
+
+        :param dims: A number of internal dimensions, creating N*2 linear
+            layers connecting each dimensional shift.
+        :param dropout_p: P-value for the drop-out layers utilized.
+        """
+        super().__init__()
+        self.encode = nn.ModuleList([
+            nn.Sequential(nn.Linear(dims[i], dims[i+1]), nn.GELU(), nn.Dropout(dropout_p))
+            for i in range(len(dims) - 1)
+        ])
+        self.decode = nn.ModuleList([
+            nn.Sequential(nn.Linear(dims[i], dims[i-1]), nn.GELU(), nn.Dropout(dropout_p))
+            for i in range(len(dims) - 1, 0, -1)
+        ])
+
+    def forward(self, x):
+        acts = []
+        for layer in self.encode:
+            acts.append(x)
+            x = layer(x)
+        for layer, a in zip(self.decode, acts[::-1]):
+            x = layer(x) + a
+        return x
 
 
 class SingleStageModel(nn.Module):
@@ -112,7 +137,3 @@ class DilatedResidualLayer(nn.Module):
         out = self.norm(out)
         out = self.dropout(out)
         return (x + out) * mask[:, None, :]
-
-
-if __name__ == "__main__":
-    _ = MultiStageModel()
