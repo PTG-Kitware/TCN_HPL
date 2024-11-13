@@ -43,6 +43,12 @@ class DropoutFrameDataTransform(torch.nn.Module):
             Standard deviation of the throughput rate for object detections.
         pose_throughput_std:
             Standard deviation of the throughput rate for pose estimations.
+        fixed_pattern:
+            Create a single, fixed dropout pattern to be applied to every
+            window based on the input throughput and latency mean values with
+            no random variation. This is idea to use for validation and test
+            dataset passes that require dropout simulation but do not want
+            random variation.
     """
 
     def __init__(
@@ -54,6 +60,7 @@ class DropoutFrameDataTransform(torch.nn.Module):
         pose_latency: Optional[float] = None,
         dets_throughput_std: float = 0.0,
         pose_throughput_std: float = 0.0,
+        fixed_pattern: bool = False,
     ):
         super().__init__()
         self.frame_rate = frame_rate
@@ -68,6 +75,7 @@ class DropoutFrameDataTransform(torch.nn.Module):
         self.pose_latency = (
             pose_latency if pose_latency is not None else 1.0 / pose_throughput_mean
         )
+        self.fixed_pattern = fixed_pattern
 
     def forward(self, window: Sequence[FrameData]) -> List[FrameData]:
         # Starting from some latency back from the end of the window, start
@@ -94,32 +102,41 @@ class DropoutFrameDataTransform(torch.nn.Module):
 
         # Define processing intervals (how often a frame is processed)
         # This cursed formatting is because of `black`.
-        dets_interval = (
-            1.0
-            / torch.normal(
-                mean=self.dets_throughput_mean,
-                std=self.dets_throughput_std,
-                size=(n_frames,),
-            ).numpy()
-        )
-        pose_interval = (
-            1.0
-            / torch.normal(
-                mean=self.pose_throughput_mean,
-                std=self.pose_throughput_std,
-                size=(n_frames,),
-            ).numpy()
-        )
+        if self.fixed_pattern:
+            dets_interval = 1.0 / np.full(n_frames, self.dets_throughput_mean)
+            pose_interval = 1.0 / np.full(n_frames, self.pose_throughput_mean)
+            # Fixed simulation of half-way into processing previous frame.
+            dets_initial_end = 0.5 * dets_interval[0]
+            pose_initial_end = 0.5 * pose_interval[0]
+        else:
+            dets_interval = (
+                1.0
+                / torch.normal(
+                    mean=self.dets_throughput_mean,
+                    std=self.dets_throughput_std,
+                    size=(n_frames,),
+                ).numpy()
+            )
+            pose_interval = (
+                1.0
+                / torch.normal(
+                    mean=self.pose_throughput_mean,
+                    std=self.pose_throughput_std,
+                    size=(n_frames,),
+                ).numpy()
+            )
+            dets_initial_end = torch.rand(1).item() * dets_interval[0]
+            pose_initial_end = torch.rand(1).item() * pose_interval[0]
 
         # Initialize end time trackers for processing detections and poses.
         # Simulate that agents may already be part-way through processing a
         # frame before the beginning of this window, utilizing the first value
         # from respective interval vectors.
         dets_processing_end = np.full(
-            n_frames + 1, torch.rand(1).item() * dets_interval[0]
+            n_frames + 1, dets_initial_end
         )
         pose_processing_end = np.full(
-            n_frames + 1, torch.rand(1).item() * pose_interval[0]
+            n_frames + 1, pose_initial_end
         )
 
         # Boolean arrays to keep track of whether a frame can be processed
@@ -184,7 +201,8 @@ class DropoutFrameDataTransform(torch.nn.Module):
 
 
 def test():
-    import numpy as np
+    from IPython.core.getipython import get_ipython
+    import pandas as pd
     from tcn_hpl.data.frame_data import FrameObjectDetections, FramePoses
 
     frame1 = FrameData(
@@ -216,18 +234,24 @@ def test():
         pose_latency=1/10,  # (1 / 10) - (1 / 14.5),
         dets_throughput_std=0.2,
         pose_throughput_std=0.2,
+        fixed_pattern=True,
     )
     modified_sequence = transform(sequence)
 
-    for idx, frame in enumerate(modified_sequence):
-        print(
-            f"Frame {idx}: Object Detections: {frame.object_detections is not None}, Poses: {frame.poses is not None}"
-        )
-
-    from IPython import get_ipython
+    print(
+        pd.DataFrame({
+            "object detections": [
+                frame.object_detections is not None for frame in modified_sequence
+            ],
+            "pose estimation": [
+                frame.poses is not None for frame in modified_sequence
+            ]
+        })
+    )
 
     ipython = get_ipython()
-    ipython.run_line_magic("timeit", "transform(sequence)")
+    if ipython is not None:
+        ipython.run_line_magic("timeit", "transform(sequence)")
 
 
 if __name__ == "__main__":
