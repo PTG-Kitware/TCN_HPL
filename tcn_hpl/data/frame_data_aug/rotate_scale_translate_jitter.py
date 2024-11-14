@@ -287,6 +287,7 @@ def test():
     pose_joint_locs = rng.randint(0, 500, (n_poses, 22, 2)).astype(float)
     pose_joint_scores = rng.uniform(0, 1, (n_poses, 22))
 
+    target_wh = 500, 500
     frame1 = FrameData(
         # 3 detections
         object_detections=FrameObjectDetections(
@@ -300,7 +301,7 @@ def test():
             joint_positions=pose_joint_locs,
             joint_scores=pose_joint_scores,
         ),
-        size=(500, 500),
+        size=target_wh,
     )
     window = [frame1] * 25
 
@@ -311,38 +312,59 @@ def test():
         ipython.run_line_magic("timeit", "augment(window)")
 
     # Visualize detection boxes before augmentation
-    fig, axes = plt.subplots(1, 2, figsize=(15, 5))
-    axes[0].set_title("Before Augmentation")
-    axes[0].set_xlim(-100, 600)
-    axes[0].set_ylim(-100, 600)
-    for win in window:
-        for box in win.object_detections.boxes:
+    fig, axes = plt.subplots(3, 3, figsize=(15, 15))
+    axes = axes.ravel()
+    axes[0].set_title("Before Augmentation of Frame 0")
+    axes[0].set_xlim(0, target_wh[0])
+    axes[0].set_ylim(0, target_wh[1])
+    for frame in window:
+        for box in frame.object_detections.boxes:
             x, y, w, h = box
             rect = plt.Rectangle(
                 (x, y), w, h, linewidth=1, edgecolor="magenta", facecolor="none"
             )
             axes[0].add_patch(rect)
-        for pose_kp in win.poses.joint_positions:
+        for pose_kp in frame.poses.joint_positions:
             axes[0].plot(pose_kp[:, 0], pose_kp[:, 1])
 
-    # Sanity check performing a single window augmentation
-    augmented_window = augment(window)
+    # For every other axes, show a different augmentation example
+    for ax_i in range(1, 9):
+        aug_window = augment(window)
+        axes[ax_i].set_title(f"Separate Augmentation [{ax_i}] of Frame 0")
+        axes[ax_i].set_xlim(0, target_wh[0])
+        axes[ax_i].set_ylim(0, target_wh[1])
+        for frame in aug_window:
+            for box in frame.object_detections.boxes:
+                x, y, w, h = box
+                rect = plt.Rectangle(
+                    (x, y), w, h, linewidth=1, edgecolor="magenta", facecolor="none"
+                )
+                axes[ax_i].add_patch(rect)
+            for pose_kp in frame.poses.joint_positions:
+                axes[ax_i].plot(pose_kp[:, 0], pose_kp[:, 1])
 
-    axes[1].set_title("After Augmentation")
-    axes[1].set_xlim(-100, 600)
-    axes[1].set_ylim(-100, 600)
-    for win in augmented_window:
-        for box in win.object_detections.boxes:
+    plt.savefig("FrameDataRotateScaleTranslateJitter_vis.png")
+    plt.close(fig)
+
+    # Visualize every frame in a window
+    fig, axes = plt.subplots(5, 5, figsize=(25, 25))
+    axes = axes.ravel()
+    augmented_window = augment(window)
+    for f_i, frame in enumerate(augmented_window):
+        axes[f_i].set_title(f"Augmented Frame [{f_i}]")
+        axes[f_i].set_xlim(0, target_wh[0])
+        axes[f_i].set_ylim(0, target_wh[1])
+        for box in frame.object_detections.boxes:
             x, y, w, h = box
             rect = plt.Rectangle(
                 (x, y), w, h, linewidth=1, edgecolor="magenta", facecolor="none"
             )
-            axes[1].add_patch(rect)
-        for i, pose_kp in enumerate(win.poses.joint_positions):
-            axes[1].plot(pose_kp[:, 0], pose_kp[:, 1])
+            axes[f_i].add_patch(rect)
+        for pose_kp in frame.poses.joint_positions:
+            axes[f_i].plot(pose_kp[:, 0], pose_kp[:, 1])
 
-    plt.savefig("FrameDataRotateScaleTranslateJitter_vis.png")
-
+    plt.savefig("FrameDataRotateScaleTranslateJitter_allFrames.png")
+    plt.close(fig)
 
 if __name__ == "__main__":
     test()
