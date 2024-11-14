@@ -254,6 +254,7 @@ class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
 
 def test():
     from IPython.core.getipython import get_ipython
+    import matplotlib.pyplot as plt
     from tcn_hpl.data.frame_data import FrameObjectDetections, FramePoses
 
     torch.manual_seed(0)
@@ -282,14 +283,37 @@ def test():
     window = [frame1] * 25
 
     augment = FrameDataRotateScaleTranslateJitter()
-    # Sanity check performing a single window augmentation
-    new_window = augment(window)
 
     ipython = get_ipython()
     if ipython is not None:
         ipython.run_line_magic("timeit", "augment(window)")
 
-    # TODO: See GPT convo for visualization draft.
+    # Visualize detection boxes before augmentation
+    fig, axes = plt.subplots(1, 2, figsize=(15, 5))
+    axes[0].set_title("Before Augmentation")
+    axes[0].set_xlim(-100, 600)
+    axes[0].set_ylim(-100, 600)
+    for box in window[0].object_detections.boxes:
+        x, y, w, h = box
+        rect = plt.Rectangle((x, y), w, h, linewidth=1, edgecolor='magenta', facecolor='none')
+        axes[0].add_patch(rect)
+    for pose_kp in window[0].poses.joint_positions:
+        axes[0].plot(pose_kp[:, 0], pose_kp[:, 1])
+
+    # Sanity check performing a single window augmentation
+    new_window = augment(window)
+
+    axes[1].set_title("After Augmentation")
+    axes[1].set_xlim(-100, 600)
+    axes[1].set_ylim(-100, 600)
+    for box in new_window[0].object_detections.boxes:
+        x, y, w, h = box
+        rect = plt.Rectangle((x, y), w, h, linewidth=1, edgecolor='magenta', facecolor='none')
+        axes[1].add_patch(rect)
+    for i, pose_kp in enumerate(new_window[0].poses.joint_positions):
+        axes[1].plot(pose_kp[:, 0], pose_kp[:, 1])
+
+    plt.savefig('FrameDataRotateScaleTranslateJitter_vis.png')
 
 
 if __name__ == "__main__":
