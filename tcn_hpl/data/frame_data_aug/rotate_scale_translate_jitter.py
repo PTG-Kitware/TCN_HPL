@@ -49,7 +49,7 @@ class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
             A relative amount to randomly adjust the position, height and width
             of frame data. Locations jitter is relative to the height and width
             of the frame. Box width and height jitter is relative to the width
-            and height of the affected box.
+            and height of the affected box. This should be in the [0, 1] range.
         dets_score_jitter:
             Randomly adjust the object detection confidence value within +/-
             the given value. The resulting value is clamped within the [0, 1]
@@ -135,7 +135,6 @@ class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
                 all_pose_kps.append(frame.poses.joint_positions)
                 all_pose_kp_scores.append(frame.poses.joint_scores)
                 frame_pose_indices.extend([i] * len(frame.poses.scores))
-
 
         location_jitter = self.location_jitter
         # Maximum x/y location jitter based on parameter and frame width/height
