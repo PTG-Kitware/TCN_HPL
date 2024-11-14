@@ -391,6 +391,8 @@ class TCNDataset(Dataset):
         # which class IDs were actually represented.
         cls_weights = np.zeros(len(activity_coco.cats))
         cls_weights[cls_ids] = 1.0 / cls_counts
+        # TODO: Warning or something if any class weight is still zero/nan/inf?
+        #       I.e. that the class has zero representation in this dataset.
         self._window_weights = cls_weights[window_final_class_ids]
 
     def load_data_online(
@@ -527,6 +529,7 @@ def test_dataset_for_input(
     )
 
     # TODO: Some method of configuring which augmentations to use.
+    from tcn_hpl.data.frame_data_aug.rotate_scale_translate_jitter import FrameDataRotateScaleTranslateJitter
     from tcn_hpl.data.frame_data_aug.window_frame_dropout import DropoutFrameDataTransform
     import torchvision.transforms
 
@@ -539,7 +542,8 @@ def test_dataset_for_input(
             pose_latency=1/10,  # (1 / 10) - (1 / 14.5),
             dets_throughput_std=0.2,
             pose_throughput_std=0.2,
-        )
+        ),
+        FrameDataRotateScaleTranslateJitter(),
     ])
 
     dataset = TCNDataset(
@@ -554,11 +558,11 @@ def test_dataset_for_input(
         target_framerate=target_framerate,
     )
 
-    logger.info(f"Number of windows: {len(dataset)}")
-
-    # Get vector dimensionality
+    logger.info("+" * 60)
     window_vecs = dataset[0]
+    logger.info(f"Number of windows: {len(dataset)}")
     logger.info(f"Feature vector dims: {window_vecs[0].shape[1]}")
+    logger.info("+" * 60)
 
     # Test that we can iterate over the dataset using a DataLoader with
     # shuffling.

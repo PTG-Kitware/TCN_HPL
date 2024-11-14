@@ -73,6 +73,11 @@ class FrameData:
     """
     Structure composing information and correlated analytic results for a
     single image frame.
+
+    Args:
+        object_detections: Optional initial frame object detections.
+        poses: Optional initial pose estimations
+        size: Frame pixel dimensions in (width, height) format (integer).
     """
 
     # Object detection results for this frame.
