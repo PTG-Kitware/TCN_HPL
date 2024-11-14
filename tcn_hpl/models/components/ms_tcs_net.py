@@ -71,6 +71,8 @@ class LinearSkipBlock(nn.Module):
         """
         Simple linear skip connection block.
 
+        This happens to make use of GELU as the linear unit utilized.
+
         :param dims: A number of internal dimensions, creating N*2 linear
             layers connecting each dimensional shift.
         :param dropout_p: P-value for the drop-out layers utilized.
@@ -93,6 +95,45 @@ class LinearSkipBlock(nn.Module):
         for layer, a in zip(self.decode, acts[::-1]):
             x = layer(x) + a
         return x
+
+
+class LinearResidual(nn.Module):
+    """
+    Sequence of fully connected layers with residual connections.
+
+    There is a single skip connection from the input to the output in order to
+    connect the two.
+
+    The number of layer specified refers to the number of *internal* layers
+    between the linear layers that transforms the interface dimension
+    (input/output) and the layer dimensions.
+
+    :param interface_dim: Dimension of input and output tensors.
+    :param layer_dim: Dimension of internal sequential residual layers.
+    :param n_layers: Number of internal layers. This should be 0 or greater.
+    """
+
+    def __init__(
+        self,
+        interface_dim: int,
+        layer_dim: int = 512,
+        n_layers: int = 5,
+        dropout_p: float = 0.25,
+    ):
+        super().__init__()
+        self.l_first = nn.Sequential(nn.Linear(interface_dim, layer_dim), nn.GELU(), nn.Dropout(dropout_p))
+        self.l_inner = nn.ModuleList([
+            nn.Sequential(nn.Linear(layer_dim, layer_dim), nn.GELU(), nn.Dropout(dropout_p))
+            for i in range(n_layers)
+        ])
+        self.l_last = nn.Sequential(nn.Linear(layer_dim, interface_dim), nn.GELU(), nn.Dropout(dropout_p))
+
+    def forward(self, x):
+        out = self.l_first(x)
+        for layer in self.l_inner:
+            out = layer(out) + out
+        out = self.l_last(out) + x
+        return out
 
 
 class SingleStageModel(nn.Module):
