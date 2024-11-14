@@ -1,14 +1,10 @@
 import typing as tg
 
-from einops import rearrange
 import numpy as np
 from skimage.transform import SimilarityTransform
 import torch
 
 from tcn_hpl.data.frame_data import FrameData, FrameObjectDetections, FramePoses
-
-# DEBUG
-from line_profiler import profile
 
 
 class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
@@ -83,7 +79,6 @@ class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
         self.dets_score_jitter = dets_score_jitter
         self.pose_score_jitter = pose_score_jitter
 
-    @profile
     def _tform_dets(
         self,
         transform: SimilarityTransform,
@@ -93,20 +88,17 @@ class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
     ):
         boxes = dets.boxes  # Shape: [4, n_dets]
         n_boxes = len(boxes)
-        # All box ltrb values
-        corners = np.array([
-            [boxes[:, 0], boxes[:, 1]],
-            [boxes[:, 0] + boxes[:, 2], boxes[:, 1]],
-            [boxes[:, 0] + boxes[:, 2], boxes[:, 1] + boxes[:, 3]],
-            [boxes[:, 0], boxes[:, 1] + boxes[:, 3]]
-        ])  # shape: [4, 2, n_boxes]
-        # Some einops to coerce all box corner points into a flat list
-        # for applying the transform to them, then back into
-        # per-detection coordinate pairs.
-        corners = rearrange(corners, "c xy b -> (b c) xy")
+        # All box ltrb values. This is formatted this way to get the matrix we
+        # want via a much less expensive np.reshape operation.
+        corners = np.asarray([
+            [boxes[:, 0], boxes[:, 0] + boxes[:, 2], boxes[:, 0] + boxes[:, 2], boxes[:, 0]],
+            [boxes[:, 1], boxes[:, 1], boxes[:, 1] + boxes[:, 3], boxes[:, 1] + boxes[:, 3]],
+        ]).T  # shape: [n_boxes, 4, 2]
+        # Reshape into a flat list for applying the transform to.
+        corners = corners.reshape(n_boxes * 4, 2)
         # corners shape now: [4 * n_boxes, 2]
         t_corners = transform(corners)  # shape: [4* n_boxes, 2]
-        t_corners = rearrange(t_corners, "(b c) xy -> b c xy", c=4)
+        t_corners = t_corners.reshape(n_boxes, 4, 2)
         # t_corners shape now: [n_boxes, 4, 2]
         # Get min and max values of transformed boxes for each
         # detection to create new axis-aligned bounding boxes.
@@ -144,7 +136,6 @@ class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
             scores=new_scores[mask],
         )
 
-    @profile
     def _tform_poses(
         self,
         transform: SimilarityTransform,
@@ -152,19 +143,14 @@ class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
         frame_height: int,
         frame_width: int,
     ):
-        joints = rearrange(
-            poses.joint_positions,
-            "p j xy -> (p j) xy",
-        )  # shape: [n_poses * n_joints, 2]
-        joints_t = rearrange(
-            transform(joints),
-            "(p j) xy -> p j xy",
-            p=len(poses.joint_positions),
-        )  # shape: [n_poses, n_joints, 2]
+        n_poses, n_kps = poses.joint_positions.shape[:2]
+        joints = poses.joint_positions.reshape(n_poses * n_kps, -1)
+        joints = transform(joints)
+        joints = joints.reshape(n_poses, n_kps, -1)  # [n_poses, n_joints, 2]
         # Add random jitter to keypoint positions
-        jitter_max = self.location_jitter * np.ones_like(joints_t)
+        jitter_max = self.location_jitter * np.ones_like(joints)
         jitter_offset = (2 * torch.rand(jitter_max.shape).numpy() - 1) * jitter_max
-        joints_t += jitter_offset
+        joints += jitter_offset
         # Add random jitter to keypoint scores
         new_joint_scores = (
             (self.pose_score_jitter * 2 * torch.rand(poses.joint_scores.shape).numpy())
@@ -175,15 +161,15 @@ class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
         # Zero out the scores for any joints that are now out of the
         # frame.
         in_frame_mask = (
-            (joints_t[:, :, 0] >= 0)
-            & (joints_t[:, :, 1] >= 0)
-            & (joints_t[:, :, 0] < frame_width)
-            & (joints_t[:, :, 1] < frame_height)
+            (joints[:, :, 0] >= 0)
+            & (joints[:, :, 1] >= 0)
+            & (joints[:, :, 0] < frame_width)
+            & (joints[:, :, 1] < frame_height)
         )
         new_joint_scores[~in_frame_mask] = 0
         return FramePoses(
             scores=poses.scores,
-            joint_positions=joints_t,
+            joint_positions=joints,
             joint_scores=new_joint_scores,
         )
 
