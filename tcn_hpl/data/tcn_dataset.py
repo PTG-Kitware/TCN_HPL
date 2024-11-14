@@ -51,25 +51,33 @@ class TCNDataset(Dataset):
         window_size:
             The size of the sliding window used to collect inputs from either a
             real-time or offline source.
+        vectorize:
+            Vectorization functor to convert frame data into an embedding
+            space.
+        window_label_idx:
+            Indicate which frame in a window of frames the window's truth label
+            should be drawn from. E.g. `-1` means assign the truth of the
+            window from the truth of the last frame in the window, `5` means
+            assign the truth of the window from the truth of the 5th frame in
+            the window, etc.
         transform_frame_data:
             Optional augmentation function that operates on a window of
             FrameData before being input to vectorization. Such an augmentation
             function should not modify the input FrameData.
-        vectorize:
-            Vectorization functor to convert frame data into an embedding
-            space.
     """
 
     def __init__(
         self,
         window_size: int,
         vectorize: Vectorize,
+        window_label_idx: int = -1,
         transform_frame_data: Optional[
             Callable[[Sequence[FrameData]], Sequence[FrameData]]
         ] = None,
     ):
         self.window_size = window_size
         self.vectorize = vectorize
+        self.window_label_idx = window_label_idx
         self.transform_frame_data = transform_frame_data
 
         # For offline mode, pre-cut videos into clips according to window
@@ -376,7 +384,7 @@ class TCNDataset(Dataset):
 
         # Collect for weighting the truth labels for the final frames of
         # windows, which is the truth value for the window as a whole.
-        window_final_class_ids = self._window_truth[:, -1]
+        window_final_class_ids = self._window_truth[:, self.window_label_idx]
         cls_ids, cls_counts = np.unique(window_final_class_ids, return_counts=True)
         # Some classes may not be represented in the truth, so initialize the
         # weights vector separately, and then assign weight values based on

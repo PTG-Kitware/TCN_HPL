@@ -1,10 +1,5 @@
 # @package _global_
 
-# to execute this experiment run:
-# python train.py experiment=example
-topic: "medical"
-task: "m2"
-
 defaults:
   - override /data: ptg
   - override /model: ptg
@@ -33,17 +28,23 @@ tags: ["m2", "ms_tcn", "debug"]
 
 seed: 12345
 
+#callbacks:
+#  model_checkpoint:
+#    # save all ~80MB checkpoints for post-training investigation.
+#    # Total: ~45GB
+#    save_top_k: 500
+
 trainer:
   min_epochs: 50
   max_epochs: 500
   log_every_n_steps: 1
 
 model:
-  num_classes: 9
+  num_classes: 9  # number of activity classification classes
   compile: false
   net:
     # Length of feature vector for a single frame.
-    # Currently derived from feature version and other hyperparameters.
+    # Currently derived from the parameterization of dataset vectorizer.
     dim: 102
 
 #    # Once upon a time defaults
@@ -67,11 +68,14 @@ data:
   batch_size: 512
   num_workers: 16
   target_framerate: 15  # BBN Hololens2 Framerate
-  # This is a little more than the number of windows in the training dataset.
-  epoch_length: 100000
+  # This is a bit more than the number of windows in the training dataset so
+  # the weighted sampler has more of an opportunity to sample the space
+  # proportionally.
+  epoch_length: 300000
 
   train_dataset:
     window_size: 25
+    window_label_idx: ${model.pred_frame_index}
     vectorize:
       _target_: tcn_hpl.data.vectorize.locs_and_confs.LocsAndConfs
       top_k: 1
@@ -93,11 +97,23 @@ data:
           pose_latency: 0.1
           dets_throughput_std: 0.2
           pose_throughput_std: 0.2
+          fixed_pattern: false
   val_dataset:
     # Augmentations on windows of frame data before performing vectorization.
     # Sharing transform with training dataset as it is only the drop-out aug to
     # simulate stream processing dropout the same.
-    transform_frame_data: ${data.train_dataset.transform_frame_data}
+    transform_frame_data:
+      transforms:
+        - _target_: tcn_hpl.data.frame_data_aug.window_frame_dropout.DropoutFrameDataTransform
+          # Mirror training hparams, except used fixed patterns.
+          frame_rate: ${data.train_dataset.frame_rate}
+          dets_throughput_mean: ${data.train_dataset.dets_throughput_mean}
+          pose_throughput_mean: ${data.train_dataset.pose_throughput_mean}
+          dets_latency: ${data.train_dataset.dets_latency}
+          pose_latency: ${data.train_dataset.pose_latency}
+          dets_throughput_std: ${data.train_dataset.dets_throughput_std}
+          pose_throughput_std: ${data.train_dataset.pose_throughput_std}
+          fixed_pattern: true
   # Test dataset usually configured the same as val, unless there is some
   # different set of transforms that should be used during test/prediction.
 

@@ -56,6 +56,7 @@ class PTGLitModule(LightningModule):
         use_smoothing_loss: bool,
         num_classes: int,
         compile: bool,
+        pred_frame_index: int = -1,
     ) -> None:
         """Initialize a `PTGLitModule`.
 
@@ -63,6 +64,11 @@ class PTGLitModule(LightningModule):
         :param criterion: Loss Computation
         :param optimizer: The optimizer to use for training.
         :param scheduler: The learning rate scheduler to use for training.
+        :param pred_frame_index:
+            Index of a frame in the window whose predicted class and
+            probabilities should represent the window as a whole. Negative
+            indices are valid. Must be a valid index into the window range
+            specified by the dataset
         """
         super().__init__()
 
@@ -86,6 +92,16 @@ class PTGLitModule(LightningModule):
         self.test_acc = Accuracy(
             task="multiclass", average="weighted", num_classes=num_classes
         )
+        # Track per-class accuracy for separated logging
+        self.train_acc_perclass = Accuracy(
+            task="multiclass", average="none", num_classes=num_classes
+        )
+        self.val_acc_perclass = Accuracy(
+            task="multiclass", average="none", num_classes=num_classes
+        )
+        self.test_acc_perclass = Accuracy(
+            task="multiclass", average="none", num_classes=num_classes
+        )
 
         self.train_f1 = F1Score(
             num_classes=num_classes, average="weighted", task="multiclass"
@@ -95,6 +111,16 @@ class PTGLitModule(LightningModule):
         )
         self.test_f1 = F1Score(
             num_classes=num_classes, average="weighted", task="multiclass"
+        )
+        # Track per-class F1 for separated logging
+        self.train_f1_perclass = F1Score(
+            num_classes=num_classes, average="none", task="multiclass"
+        )
+        self.val_f1_perclass = F1Score(
+            num_classes=num_classes, average="none", task="multiclass"
+        )
+        self.test_f1_perclass = F1Score(
+            num_classes=num_classes, average="none", task="multiclass"
         )
 
         self.train_recall = Recall(
@@ -235,10 +261,11 @@ class PTGLitModule(LightningModule):
             for p in logits:
                 loss += self.compute_loss(p, y, m)
 
+        pred_frame_index = self.hparams.pred_frame_index
         probs = torch.softmax(
-            logits[-1, :, :, -1], dim=1
+            logits[-1, :, :, pred_frame_index], dim=1
         )  # shape (batch size, self.hparams.num_classes)
-        preds = torch.argmax(logits[-1, :, :, -1], dim=1)  # shape: batch size
+        preds = torch.argmax(logits[-1, :, :, pred_frame_index], dim=1)  # shape: batch size
 
         return loss, probs, preds, y, source_vid, source_frame
 
@@ -260,7 +287,7 @@ class PTGLitModule(LightningModule):
 
         # update and log metrics
         self.train_loss(loss)
-        self.train_acc(preds, targets[:, -1])
+        self.train_acc(preds, targets[:, self.hparams.pred_frame_index])
 
         self.log(
             "train/loss", self.train_loss, on_step=False, on_epoch=True, prog_bar=True
@@ -269,14 +296,24 @@ class PTGLitModule(LightningModule):
             "train/acc", self.train_acc, on_step=False, on_epoch=True, prog_bar=True
         )
 
+        self.train_acc_perclass(preds, targets[:, self.hparams.pred_frame_index])
+        for c_i, c_acc in enumerate(self.train_acc_perclass.compute()):
+            self.log(
+                f"train/acc-per-class/c{c_i}",
+                c_acc,
+                prog_bar=False,
+                on_step=False,
+                on_epoch=True,
+            )
+
         # return loss or backpropagation will fail
         return {
             "loss": loss,
             "preds": preds,
             "probs": probs,
-            "targets": targets[:, -1],
-            "source_vid": source_vid[:, -1],
-            "source_frame": source_frame[:, -1],
+            "targets": targets[:, self.hparams.pred_frame_index],
+            "source_vid": source_vid[:, self.hparams.pred_frame_index],
+            "source_frame": source_frame[:, self.hparams.pred_frame_index],
         }
 
     def training_epoch_end(self, outputs: EPOCH_OUTPUT) -> None:
@@ -289,6 +326,15 @@ class PTGLitModule(LightningModule):
         self.log("train/f1", self.train_f1, prog_bar=True, on_epoch=True)
         self.log("train/recall", self.train_recall, prog_bar=True, on_epoch=True)
         self.log("train/precision", self.train_precision, prog_bar=True, on_epoch=True)
+        # vector metrics
+        self.train_f1_perclass(all_preds, all_targets)
+        for c_i, c_f1 in enumerate(self.train_f1_perclass.compute()):
+            self.log(
+                f"train/f1-per-class/c{c_i}",
+                c_f1,
+                prog_bar=False,
+                on_epoch=True,
+            )
 
     def validation_step(
         self,
@@ -307,10 +353,20 @@ class PTGLitModule(LightningModule):
 
         # update and log metrics
         self.val_loss(loss)
-        self.val_acc(preds, targets[:, -1])
+        self.val_acc(preds, targets[:, self.hparams.pred_frame_index])
 
         self.log("val/loss", self.val_loss, on_step=False, on_epoch=True, prog_bar=True)
         self.log("val/acc", self.val_acc, on_step=False, on_epoch=True, prog_bar=True)
+
+        self.val_acc_perclass(preds, targets[:, self.hparams.pred_frame_index])
+        for c_i, c_acc in enumerate(self.val_acc_perclass.compute()):
+            self.log(
+                f"val/acc-per-class/c{c_i}",
+                c_acc,
+                prog_bar=False,
+                on_step=False,
+                on_epoch=True,
+            )
 
         # Only retain the truth and source vid/frame IDs for the final window
         # frame as this is the ultimately relevant result.
@@ -318,9 +374,9 @@ class PTGLitModule(LightningModule):
             "loss": loss,
             "preds": preds,
             "probs": probs,
-            "targets": targets[:, -1],
-            "source_vid": source_vid[:, -1],
-            "source_frame": source_frame[:, -1],
+            "targets": targets[:, self.hparams.pred_frame_index],
+            "source_vid": source_vid[:, self.hparams.pred_frame_index],
+            "source_frame": source_frame[:, self.hparams.pred_frame_index],
         }
 
     def validation_epoch_end(self, outputs: Union[EPOCH_OUTPUT, List[EPOCH_OUTPUT]]) -> None:
@@ -333,6 +389,15 @@ class PTGLitModule(LightningModule):
         self.log("val/f1", self.val_f1, prog_bar=True, on_epoch=True)
         self.log("val/recall", self.val_recall, prog_bar=True, on_epoch=True)
         self.log("val/precision", self.val_precision, prog_bar=True, on_epoch=True)
+        # vector metrics
+        self.val_f1_perclass(all_preds, all_targets)
+        for c_i, c_f1 in enumerate(self.val_f1_perclass.compute()):
+            self.log(
+                f"val/f1-per-class/c{c_i}",
+                c_f1,
+                prog_bar=False,
+                on_epoch=True,
+            )
 
         # log `val_f1_best` as a value through `.compute()` return, instead of
         # as a metric object otherwise metric would be reset by lightning after
@@ -357,11 +422,21 @@ class PTGLitModule(LightningModule):
 
         # update and log metrics
         self.test_loss(loss)
-        self.test_acc(preds, targets[:, -1])
+        self.test_acc(preds, targets[:, self.hparams.pred_frame_index])
         self.log(
             "test/loss", self.test_loss, on_step=False, on_epoch=True, prog_bar=True
         )
         self.log("test/acc", self.test_acc, on_step=False, on_epoch=True, prog_bar=True)
+
+        self.test_acc_perclass(preds, targets[:, self.hparams.pred_frame_index])
+        for c_i, c_acc in enumerate(self.test_acc_perclass.compute()):
+            self.log(
+                f"test/acc-per-class/c{c_i}",
+                c_acc,
+                prog_bar=False,
+                on_step=False,
+                on_epoch=True,
+            )
 
         # Only retain the truth and source vid/frame IDs for the final window
         # frame as this is the ultimately relevant result.
@@ -369,9 +444,9 @@ class PTGLitModule(LightningModule):
             "loss": loss,
             "preds": preds,
             "probs": probs,
-            "targets": targets[:, -1],
-            "source_vid": source_vid[:, -1],
-            "source_frame": source_frame[:, -1],
+            "targets": targets[:, self.hparams.pred_frame_index],
+            "source_vid": source_vid[:, self.hparams.pred_frame_index],
+            "source_frame": source_frame[:, self.hparams.pred_frame_index],
         }
 
     def test_epoch_end(self, outputs: Union[EPOCH_OUTPUT, List[EPOCH_OUTPUT]]) -> None:
@@ -385,6 +460,15 @@ class PTGLitModule(LightningModule):
         self.log("test/f1", self.test_f1, on_step=False, on_epoch=True, prog_bar=True)
         self.log("test/recall", self.test_recall, on_step=False, on_epoch=True, prog_bar=True)
         self.log("test/precision", self.test_precision, on_step=False, on_epoch=True, prog_bar=True)
+        # vector metrics
+        self.test_f1_perclass(all_preds, all_targets)
+        for c_i, c_f1 in enumerate(self.test_f1_perclass.compute()):
+            self.log(
+                f"test/f1-per-class/c{c_i}",
+                c_f1,
+                prog_bar=False,
+                on_epoch=True,
+            )
 
     def setup(self, stage: Optional[str] = None) -> None:
         """Lightning hook that is called at the beginning of fit (train + validate), validate,

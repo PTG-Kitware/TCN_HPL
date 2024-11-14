@@ -203,12 +203,19 @@ class PTGDataModule(LightningDataModule):
 
         :return: The validation dataloader.
         """
+        val_sampler = torch.utils.data.WeightedRandomSampler(
+            self.data_val.window_weights,
+            len(self.data_val) * 3,
+            replacement=True,
+            generator=None,
+        )
         return DataLoader(
             dataset=self.data_val,
             batch_size=self.hparams.batch_size,
             num_workers=self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
-            shuffle=False,
+            # shuffle=False,
+            sampler=val_sampler,
         )
 
     def test_dataloader(self) -> DataLoader[Any]:
