@@ -233,9 +233,9 @@ class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
             all_pose_kp_scores[all_pose_kp_scores > 1] = 1
 
             # Transform keypoint locations
-            all_pose_kps = all_pose_kps.reshape(n_poses * n_kps, -1)
+            all_pose_kps = all_pose_kps.reshape(n_poses * n_kps, 2)
             all_pose_kps = transform(all_pose_kps)
-            all_pose_kps = all_pose_kps.reshape(n_poses, n_kps, -1)
+            all_pose_kps = all_pose_kps.reshape(n_poses, n_kps, 2)
 
             # Zero out the scores for any joints that are now out of the frame
             in_frame = (
@@ -251,6 +251,8 @@ class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
         ]
         for i, new_frame in enumerate(modified_sequence):
             if window[i].object_detections is not None:
+                # Make sure we emit an instance if there was an instance input
+                # even if the arrays are empty.
                 frame_i_mask = (frame_dets_indices == i)
                 new_frame.object_detections = FrameObjectDetections(
                     boxes=all_box_coords[frame_i_mask],
@@ -258,6 +260,8 @@ class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
                     scores=all_box_scores[frame_i_mask],
                 )
             if window[i].poses is not None:
+                # Make sure we emit an instance if there was an instance input
+                # even if the arrays are empty.
                 frame_i_mask = (frame_pose_indices == i)
                 new_frame.poses = FramePoses(
                     scores=all_pose_scores[frame_i_mask],
