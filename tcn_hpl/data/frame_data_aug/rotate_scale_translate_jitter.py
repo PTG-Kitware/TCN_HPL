@@ -47,9 +47,9 @@ class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
             ascending order.
         location_jitter:
             A relative amount to randomly adjust the position, height and width
-            of frame data. For object detections, this is applied to all corner
-            points uniformly per detection. For pose joint keypoints, jitter is
-            applied independently per keypoint.
+            of frame data. Locations jitter is relative to the height and width
+            of the frame. Box width and height jitter is relative to the width
+            and height of the affected box.
         dets_score_jitter:
             Randomly adjust the object detection confidence value within +/-
             the given value. The resulting value is clamped within the [0, 1]
@@ -67,7 +67,7 @@ class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
         translate: float = 0.1,
         scale: tg.Sequence[float] = (0.9, 1.1),
         rotate: tg.Sequence[float] = (-10, 10),
-        location_jitter: float = 0.05,
+        location_jitter: float = 0.025,
         dets_score_jitter: float = 0.1,
         pose_score_jitter: float = 0.1,
     ):
@@ -78,100 +78,6 @@ class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
         self.location_jitter = location_jitter
         self.dets_score_jitter = dets_score_jitter
         self.pose_score_jitter = pose_score_jitter
-
-    def _tform_dets(
-        self,
-        transform: SimilarityTransform,
-        dets: FrameObjectDetections,
-        frame_height: int,
-        frame_width: int,
-    ):
-        boxes = dets.boxes  # Shape: [4, n_dets]
-        n_boxes = len(boxes)
-        # All box ltrb values. This is formatted this way to get the matrix we
-        # want via a much less expensive np.reshape operation.
-        corners = np.asarray([
-            [boxes[:, 0], boxes[:, 0] + boxes[:, 2], boxes[:, 0] + boxes[:, 2], boxes[:, 0]],
-            [boxes[:, 1], boxes[:, 1], boxes[:, 1] + boxes[:, 3], boxes[:, 1] + boxes[:, 3]],
-        ]).T  # shape: [n_boxes, 4, 2]
-        # Reshape into a flat list for applying the transform to.
-        corners = corners.reshape(n_boxes * 4, 2)
-        # corners shape now: [4 * n_boxes, 2]
-        t_corners = transform(corners)  # shape: [4* n_boxes, 2]
-        t_corners = t_corners.reshape(n_boxes, 4, 2)
-        # t_corners shape now: [n_boxes, 4, 2]
-        # Get min and max values of transformed boxes for each
-        # detection to create new axis-aligned bounding boxes.
-        x_min = t_corners[:, :, 0].min(axis=1)  # shape: [n_boxes]
-        y_min = t_corners[:, :, 1].min(axis=1)  # shape: [n_boxes]
-        x_max = t_corners[:, :, 0].max(axis=1)  # shape: [n_boxes]
-        y_max = t_corners[:, :, 1].max(axis=1)  # shape: [n_boxes]
-        # Generate and apply a little bownian jitter based on a
-        # fraction of the transformed object bounding box size. This is
-        # happening post scene transform on purpose.
-        jitter_max = (
-            self.location_jitter * np.array([x_max - x_min, y_max - y_min]).T
-        )  # shape: [n_boxes, 2]
-        jitter_offset = (2 * torch.rand(n_boxes, 2) - 1).numpy() * jitter_max
-        x_min += jitter_offset[:, 0]
-        y_min += jitter_offset[:, 1]
-        x_max += jitter_offset[:, 0]
-        y_max += jitter_offset[:, 1]
-        # Jitter confidence scores
-        new_scores = (
-            (self.dets_score_jitter * 2 * torch.rand(dets.scores.shape).numpy())
-            - self.dets_score_jitter
-        ) + dets.scores
-        new_scores[new_scores < 0] = 0
-        new_scores[new_scores > 1] = 1
-
-        # Create mask for boxes that are at least partially in-frame.
-        mask = (
-            (x_max > 0) & (y_max > 0) & (x_min < frame_width) & (y_min < frame_height)
-        )
-        new_boxes = np.asarray([x_min, y_min, x_max - x_min, y_max - y_min]).T
-        return FrameObjectDetections(
-            boxes=new_boxes[mask],
-            labels=dets.labels[mask],
-            scores=new_scores[mask],
-        )
-
-    def _tform_poses(
-        self,
-        transform: SimilarityTransform,
-        poses: FramePoses,
-        frame_height: int,
-        frame_width: int,
-    ):
-        n_poses, n_kps = poses.joint_positions.shape[:2]
-        joints = poses.joint_positions.reshape(n_poses * n_kps, -1)
-        joints = transform(joints)
-        joints = joints.reshape(n_poses, n_kps, -1)  # [n_poses, n_joints, 2]
-        # Add random jitter to keypoint positions
-        jitter_max = self.location_jitter * np.ones_like(joints)
-        jitter_offset = (2 * torch.rand(jitter_max.shape).numpy() - 1) * jitter_max
-        joints += jitter_offset
-        # Add random jitter to keypoint scores
-        new_joint_scores = (
-            (self.pose_score_jitter * 2 * torch.rand(poses.joint_scores.shape).numpy())
-            - self.pose_score_jitter
-        ) + poses.joint_scores
-        new_joint_scores[new_joint_scores < 0] = 0
-        new_joint_scores[new_joint_scores > 1] = 1
-        # Zero out the scores for any joints that are now out of the
-        # frame.
-        in_frame_mask = (
-            (joints[:, :, 0] >= 0)
-            & (joints[:, :, 1] >= 0)
-            & (joints[:, :, 0] < frame_width)
-            & (joints[:, :, 1] < frame_height)
-        )
-        new_joint_scores[~in_frame_mask] = 0
-        return FramePoses(
-            scores=poses.scores,
-            joint_positions=joints,
-            joint_scores=new_joint_scores,
-        )
 
     def forward(self, window: tg.Sequence[FrameData]) -> tg.List[FrameData]:
         # Extract frame size from the first frame (assuming all frames have the same size)
@@ -208,32 +114,156 @@ class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
         t_to_base = SimilarityTransform(translation=(center_x, center_y))
         transform = t_to_base + t_rotate_scale + t_to_origin
 
-        modified_sequence: tg.List[FrameData] = []
+        # Collect all frame detection boxes and scores in order to batch
+        # transform and jitter.
+        all_box_coords = []
+        all_box_labels = []
+        all_box_scores = []
+        frame_dets_indices = []
+        all_pose_scores = []
+        all_pose_kps = []
+        all_pose_kp_scores = []
+        frame_pose_indices = []
+        for i, frame in enumerate(window):
+            if frame.object_detections is not None:
+                all_box_coords.append(frame.object_detections.boxes)
+                all_box_labels.append(frame.object_detections.labels)
+                all_box_scores.append(frame.object_detections.scores)
+                frame_dets_indices.extend([i] * len(frame.object_detections.boxes))
+            if frame.poses is not None:
+                all_pose_scores.append(frame.poses.scores)
+                all_pose_kps.append(frame.poses.joint_positions)
+                all_pose_kp_scores.append(frame.poses.joint_scores)
+                frame_pose_indices.extend([i] * len(frame.poses.scores))
 
-        for fd in window:
-            new_fd = FrameData(
-                object_detections=None,
-                poses=None,
-                size=fd.size,
+
+        location_jitter = self.location_jitter
+        # Maximum x/y location jitter based on parameter and frame width/height
+        xy_jitter_max = np.asarray([frame_width, frame_height]) * location_jitter
+
+        if all_box_coords:
+            # Pull together all xywh boxes.
+            all_box_coords = np.concatenate(all_box_coords)  # shape: [n_dets, 4]
+            all_box_labels = np.concatenate(all_box_labels)  # shape: [n_dets]
+            all_box_scores = np.concatenate(all_box_scores)  # shape: [n_dets]
+            frame_dets_indices = np.asarray(frame_dets_indices)
+            n_dets = len(frame_dets_indices)
+
+            # All the random for box components + scores generated in one
+            # pass.
+            det_rand = torch.rand(n_dets, 5).numpy()
+
+            # Jitter box locations and sizes.
+            xy_jitter = (xy_jitter_max * 2 * det_rand[:, :2]) - xy_jitter_max
+            all_box_coords[:, :2] += xy_jitter
+            wh_jitter_max = all_box_coords[:, 2:] * location_jitter
+            wh_jitter = (wh_jitter_max * 2 * det_rand[:, 2:4]) - wh_jitter_max
+            all_box_coords[:, 2:] += wh_jitter
+            # Jitter box scores and clamp
+            score_jitter = (self.dets_score_jitter * 2 * det_rand[:, 4]) - self.dets_score_jitter
+            all_box_scores += score_jitter
+            all_box_scores[all_box_scores < 0] = 0
+            all_box_scores[all_box_scores > 1] = 1
+
+            # All box ltrb values. This is formatted this way to get the matrix
+            # we want via a much less expensive np.reshape operation as opposed
+            # to leaning on einops.
+            corners = np.asarray(
+                [
+                    [
+                        all_box_coords[:, 0],
+                        all_box_coords[:, 0] + all_box_coords[:, 2],
+                        all_box_coords[:, 0] + all_box_coords[:, 2],
+                        all_box_coords[:, 0],
+                    ],
+                    [
+                        all_box_coords[:, 1],
+                        all_box_coords[:, 1],
+                        all_box_coords[:, 1] + all_box_coords[:, 3],
+                        all_box_coords[:, 1] + all_box_coords[:, 3],
+                    ],
+                ]
+            ).T  # shape: [n_dets, 4, 2]
+            # Reshape into a flat list for applying the transform to.
+            corners = corners.reshape(n_dets * 4, 2)
+            # corners shape now: [4 * n_dets, 2]
+            corners = transform(corners)  # shape: [4* n_dets, 2]
+            corners = corners.reshape(n_dets, 4, 2)
+            # corners shape now: [n_dets, 4, 2]
+            # Get min and max values of transformed boxes for each
+            # detection to create new axis-aligned bounding boxes.
+            x_min = corners[:, :, 0].min(axis=1)  # shape: [n_dets]
+            y_min = corners[:, :, 1].min(axis=1)  # shape: [n_dets]
+            x_max = corners[:, :, 0].max(axis=1)  # shape: [n_dets]
+            y_max = corners[:, :, 1].max(axis=1)  # shape: [n_dets]
+            all_box_coords = np.asarray([x_min, y_min, x_max - x_min, y_max - y_min]).T
+            # Create mask for dets that are at least partially in the frame.
+            in_frame = (
+                (x_max > 0) & (y_max > 0) & (x_min < frame_width) & (y_min < frame_height)
             )
+            # Filter down detections to those in the frame
+            all_box_coords = all_box_coords[in_frame]
+            all_box_labels = all_box_labels[in_frame]
+            all_box_scores = all_box_scores[in_frame]
+            frame_dets_indices = frame_dets_indices[in_frame]
 
-            if fd.object_detections is not None:
-                new_fd.object_detections = self._tform_dets(
-                    transform=transform,
-                    dets=fd.object_detections,
-                    frame_height=frame_height,
-                    frame_width=frame_width,
+        if all_pose_kps:
+            all_pose_scores = np.concatenate(all_pose_scores)
+            all_pose_kps = np.concatenate(all_pose_kps)
+            all_pose_kp_scores = np.concatenate(all_pose_kp_scores)
+            frame_pose_indices = np.asarray(frame_pose_indices)
+            n_poses, n_kps = all_pose_kps.shape[:2]
+
+            # All the random for box components + scores generated in one
+            # pass. Need random values for each keypoint location and score
+            # for each pose.
+            pose_kp_rand = torch.rand(n_poses, n_kps, 3).numpy()
+            pose_score_rand = torch.rand(n_poses).numpy()
+
+            # Jitter pose score & clamp
+            score_jitter = (self.pose_score_jitter * 2 * pose_score_rand) - self.pose_score_jitter
+            all_pose_scores += score_jitter
+            # Jitter pose keypoint locations
+            xy_jitter = (xy_jitter_max * 2 * pose_kp_rand[:, :, :2]) - xy_jitter_max
+            all_pose_kps += xy_jitter
+            # Jitter pose keypoint scores & clamp
+            score_jitter = (self.pose_score_jitter * 2 * pose_kp_rand[:, :, 2]) - self.pose_score_jitter
+            all_pose_kp_scores += score_jitter
+            all_pose_kp_scores[all_pose_kp_scores < 0] = 0
+            all_pose_kp_scores[all_pose_kp_scores > 1] = 1
+
+            # Transform keypoint locations
+            all_pose_kps = all_pose_kps.reshape(n_poses * n_kps, -1)
+            all_pose_kps = transform(all_pose_kps)
+            all_pose_kps = all_pose_kps.reshape(n_poses, n_kps, -1)
+
+            # Zero out the scores for any joints that are now out of the frame
+            in_frame = (
+                (all_pose_kps[:, :, 0] >= 0)
+                & (all_pose_kps[:, :, 1] >= 0)
+                & (all_pose_kps[:, :, 0] < frame_width)
+                & (all_pose_kps[:, :, 1] < frame_height)
+            )
+            all_pose_kp_scores[~in_frame] = 0
+
+        modified_sequence: tg.List[FrameData] = [
+            FrameData(None, None, size=d.size) for d in window
+        ]
+        for i, new_frame in enumerate(modified_sequence):
+            if window[i].object_detections is not None:
+                frame_i_mask = (frame_dets_indices == i)
+                new_frame.object_detections = FrameObjectDetections(
+                    boxes=all_box_coords[frame_i_mask],
+                    labels=all_box_labels[frame_i_mask],
+                    scores=all_box_scores[frame_i_mask],
                 )
-
-            if fd.poses is not None:
-                new_fd.poses = self._tform_poses(
-                    transform=transform,
-                    poses=fd.poses,
-                    frame_height=frame_height,
-                    frame_width=frame_width,
+            if window[i].poses is not None:
+                frame_i_mask = (frame_pose_indices == i)
+                new_frame.poses = FramePoses(
+                    scores=all_pose_scores[frame_i_mask],
+                    joint_positions=all_pose_kps[frame_i_mask],
+                    joint_scores=all_pose_kp_scores[frame_i_mask],
                 )
-
-            modified_sequence.append(new_fd)
 
         return modified_sequence
 
@@ -244,17 +274,19 @@ def test():
     from tcn_hpl.data.frame_data import FrameObjectDetections, FramePoses
 
     torch.manual_seed(0)
+    # Prime the pump
+    torch.rand(1)
 
     rng = np.random.RandomState(0)
     n_poses = 3
     pose_scores = rng.uniform(0, 1, n_poses)
-    pose_joint_locs = rng.randint(0, 500, (n_poses, 22, 2))
+    pose_joint_locs = rng.randint(0, 500, (n_poses, 22, 2)).astype(float)
     pose_joint_scores = rng.uniform(0, 1, (n_poses, 22))
 
     frame1 = FrameData(
         # 3 detections
         object_detections=FrameObjectDetections(
-            boxes=np.array([[10, 20, 30, 40], [50, 60, 70, 80], [90, 100, 110, 120]]),
+            boxes=np.array([[10., 20, 30, 40], [50, 60, 70, 80], [90, 100, 110, 120]]),
             labels=np.array([1, 2, 3]),
             scores=np.array([0.9, 0.75, 0.11]),
         ),
@@ -279,27 +311,33 @@ def test():
     axes[0].set_title("Before Augmentation")
     axes[0].set_xlim(-100, 600)
     axes[0].set_ylim(-100, 600)
-    for box in window[0].object_detections.boxes:
-        x, y, w, h = box
-        rect = plt.Rectangle((x, y), w, h, linewidth=1, edgecolor='magenta', facecolor='none')
-        axes[0].add_patch(rect)
-    for pose_kp in window[0].poses.joint_positions:
-        axes[0].plot(pose_kp[:, 0], pose_kp[:, 1])
+    for win in window:
+        for box in win.object_detections.boxes:
+            x, y, w, h = box
+            rect = plt.Rectangle(
+                (x, y), w, h, linewidth=1, edgecolor="magenta", facecolor="none"
+            )
+            axes[0].add_patch(rect)
+        for pose_kp in win.poses.joint_positions:
+            axes[0].plot(pose_kp[:, 0], pose_kp[:, 1])
 
     # Sanity check performing a single window augmentation
-    new_window = augment(window)
+    augmented_window = augment(window)
 
     axes[1].set_title("After Augmentation")
     axes[1].set_xlim(-100, 600)
     axes[1].set_ylim(-100, 600)
-    for box in new_window[0].object_detections.boxes:
-        x, y, w, h = box
-        rect = plt.Rectangle((x, y), w, h, linewidth=1, edgecolor='magenta', facecolor='none')
-        axes[1].add_patch(rect)
-    for i, pose_kp in enumerate(new_window[0].poses.joint_positions):
-        axes[1].plot(pose_kp[:, 0], pose_kp[:, 1])
+    for win in augmented_window:
+        for box in win.object_detections.boxes:
+            x, y, w, h = box
+            rect = plt.Rectangle(
+                (x, y), w, h, linewidth=1, edgecolor="magenta", facecolor="none"
+            )
+            axes[1].add_patch(rect)
+        for i, pose_kp in enumerate(win.poses.joint_positions):
+            axes[1].plot(pose_kp[:, 0], pose_kp[:, 1])
 
-    plt.savefig('FrameDataRotateScaleTranslateJitter_vis.png')
+    plt.savefig("FrameDataRotateScaleTranslateJitter_vis.png")
 
 
 if __name__ == "__main__":
