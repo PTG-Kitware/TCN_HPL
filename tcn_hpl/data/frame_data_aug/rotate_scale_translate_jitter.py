@@ -118,7 +118,13 @@ class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
             translation=(translate_x, translate_y),
         )
         t_to_base = SimilarityTransform(translation=(center_x, center_y))
-        transform = t_to_base + t_rotate_scale + t_to_origin
+        transform = t_to_origin + t_rotate_scale + t_to_base
+        # While we could just do `transform(2d_coors)`, it's not specifically
+        # the fastest. Instead, we'll just do the dot product ourselves.
+        tform = lambda pts: (
+            transform.params
+            @ np.concatenate([pts, np.ones((pts.shape[0], 1))], axis=1).T
+        )[:2].T
 
         # Collect all frame detection boxes and scores in order to batch
         # transform and jitter.
@@ -155,7 +161,9 @@ class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
             det_rand = torch.rand(n_dets, 5).numpy()
 
             # Jitter box locations and sizes.
-            xy_jitter_max = np.asarray([frame_width, frame_height]) * self.det_loc_jitter
+            xy_jitter_max = (
+                np.asarray([frame_width, frame_height]) * self.det_loc_jitter
+            )
             xy_jitter = (xy_jitter_max * 2 * det_rand[:, :2]) - xy_jitter_max
             all_box_coords[:, :2] += xy_jitter
             wh_jitter_max = all_box_coords[:, 2:] * self.det_wh_jitter
@@ -163,9 +171,8 @@ class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
             all_box_coords[:, 2:] += wh_jitter
             # Jitter box scores and clamp
             score_jitter = (
-                (self.dets_score_jitter * 2 * det_rand[:, 4])
-                - self.dets_score_jitter
-            )
+                self.dets_score_jitter * 2 * det_rand[:, 4]
+            ) - self.dets_score_jitter
             all_box_scores += score_jitter
             all_box_scores[all_box_scores < 0] = 0
             all_box_scores[all_box_scores > 1] = 1
@@ -191,10 +198,9 @@ class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
             ).T  # shape: [n_dets, 4, 2]
             # Reshape into a flat list for applying the transform to.
             corners = corners.reshape(n_dets * 4, 2)
-            # corners shape now: [4 * n_dets, 2]
-            corners = transform(corners)  # shape: [4* n_dets, 2]
+            corners = tform(corners)
             corners = corners.reshape(n_dets, 4, 2)
-            # corners shape now: [n_dets, 4, 2]
+
             # Get min and max values of transformed boxes for each
             # detection to create new axis-aligned bounding boxes.
             x_min = corners[:, :, 0].min(axis=1)  # shape: [n_dets]
@@ -204,7 +210,10 @@ class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
             all_box_coords = np.asarray([x_min, y_min, x_max - x_min, y_max - y_min]).T
             # Create mask for dets that are at least partially in the frame.
             in_frame = (
-                (x_max > 0) & (y_max > 0) & (x_min < frame_width) & (y_min < frame_height)
+                (x_max > 0)
+                & (y_max > 0)
+                & (x_min < frame_width)
+                & (y_min < frame_height)
             )
             # Filter down detections to those in the frame
             all_box_coords = all_box_coords[in_frame]
@@ -227,28 +236,28 @@ class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
 
             # Jitter pose score & clamp
             score_jitter = (
-                (self.pose_score_jitter * 2 * pose_score_rand)
-                - self.pose_score_jitter
-            )
+                self.pose_score_jitter * 2 * pose_score_rand
+            ) - self.pose_score_jitter
             all_pose_scores += score_jitter
             all_pose_scores[all_pose_scores < 0] = 0
             all_pose_scores[all_pose_scores > 1] = 1
             # Jitter pose keypoint locations
-            xy_jitter_max = np.asarray([frame_width, frame_height]) * self.pose_kp_loc_jitter
+            xy_jitter_max = (
+                np.asarray([frame_width, frame_height]) * self.pose_kp_loc_jitter
+            )
             xy_jitter = (xy_jitter_max * 2 * pose_kp_rand[:, :, :2]) - xy_jitter_max
             all_pose_kps += xy_jitter
             # Jitter pose keypoint scores & clamp
             score_jitter = (
-                (self.pose_kp_score_jitter * 2 * pose_kp_rand[:, :, 2])
-                - self.pose_kp_score_jitter
-            )
+                self.pose_kp_score_jitter * 2 * pose_kp_rand[:, :, 2]
+            ) - self.pose_kp_score_jitter
             all_pose_kp_scores += score_jitter
             all_pose_kp_scores[all_pose_kp_scores < 0] = 0
             all_pose_kp_scores[all_pose_kp_scores > 1] = 1
 
             # Transform keypoint locations
             all_pose_kps = all_pose_kps.reshape(n_poses * n_kps, 2)
-            all_pose_kps = transform(all_pose_kps)
+            all_pose_kps = tform(all_pose_kps)
             all_pose_kps = all_pose_kps.reshape(n_poses, n_kps, 2)
 
             # Zero out the scores for any joints that are now out of the frame
@@ -267,7 +276,7 @@ class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
             if window[i].object_detections is not None:
                 # Make sure we emit an instance if there was an instance input
                 # even if the arrays are empty.
-                frame_i_mask = (frame_dets_indices == i)
+                frame_i_mask = frame_dets_indices == i
                 new_frame.object_detections = FrameObjectDetections(
                     boxes=all_box_coords[frame_i_mask],
                     labels=all_box_labels[frame_i_mask],
@@ -276,7 +285,7 @@ class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
             if window[i].poses is not None:
                 # Make sure we emit an instance if there was an instance input
                 # even if the arrays are empty.
-                frame_i_mask = (frame_pose_indices == i)
+                frame_i_mask = frame_pose_indices == i
                 new_frame.poses = FramePoses(
                     scores=all_pose_scores[frame_i_mask],
                     joint_positions=all_pose_kps[frame_i_mask],
@@ -305,7 +314,7 @@ def test():
     frame1 = FrameData(
         # 3 detections
         object_detections=FrameObjectDetections(
-            boxes=np.array([[10., 20, 30, 40], [50, 60, 70, 80], [90, 100, 110, 120]]),
+            boxes=np.array([[10.0, 20, 30, 40], [50, 60, 70, 80], [90, 100, 110, 120]]),
             labels=np.array([1, 2, 3]),
             scores=np.array([0.9, 0.75, 0.11]),
         ),
@@ -321,15 +330,18 @@ def test():
 
     augment = FrameDataRotateScaleTranslateJitter(
         translate=0.25,
-        scale=[0.6, 1.4],
-        rotate=[-30, 30],
-        det_loc_jitter=0.03,
-        det_wh_jitter=0.25,
+        scale=[0.7, 1.3],
+        rotate=[-25, 25],
+        det_loc_jitter=0,  # 0.03,
+        det_wh_jitter=0,  # 0.25,
+        pose_kp_loc_jitter=0,  # 0.035,
         dets_score_jitter=0.4,
         pose_score_jitter=0.4,
-        pose_kp_loc_jitter=0.1,
         pose_kp_score_jitter=0.4,
     )
+
+    # Idiot check.
+    augment(window)
 
     ipython = get_ipython()
     if ipython is not None:
@@ -389,6 +401,7 @@ def test():
 
     plt.savefig("FrameDataRotateScaleTranslateJitter_allFrames.png")
     plt.close(fig)
+
 
 if __name__ == "__main__":
     test()
