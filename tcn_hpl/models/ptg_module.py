@@ -6,7 +6,7 @@ import torch
 from pytorch_lightning.utilities.types import EPOCH_OUTPUT, STEP_OUTPUT
 from torch import nn
 import torch.nn.functional as F
-from torchmetrics import MaxMetric, MeanMetric
+from torchmetrics import MaxMetric, MeanMetric, MetricCollection
 from torchmetrics.classification.accuracy import Accuracy
 from torchmetrics.classification import F1Score, Recall, Precision
 
@@ -82,66 +82,50 @@ class PTGLitModule(LightningModule):
         self.criterion = criterion
         self.mse = nn.MSELoss(reduction="none")
 
-        # metric objects for calculating and averaging accuracy across batches
-        self.train_acc = Accuracy(
-            task="multiclass", average="weighted", num_classes=num_classes
-        )
-        self.val_acc = Accuracy(
-            task="multiclass", average="weighted", num_classes=num_classes
-        )
-        self.test_acc = Accuracy(
-            task="multiclass", average="weighted", num_classes=num_classes
-        )
-        # Track per-class accuracy for separated logging
-        self.train_acc_perclass = Accuracy(
-            task="multiclass", average="none", num_classes=num_classes
-        )
-        self.val_acc_perclass = Accuracy(
-            task="multiclass", average="none", num_classes=num_classes
-        )
-        self.test_acc_perclass = Accuracy(
-            task="multiclass", average="none", num_classes=num_classes
-        )
+        # We only want to validation metric logging if training has actually
+        # started, i.e. not during the sanity checking phase.
+        self.has_training_started = False
 
-        self.train_f1 = F1Score(
-            num_classes=num_classes, average="weighted", task="multiclass"
+        # Metric objects for calculating and averaging accuracy across batches
+        # Various metrics are reset at the **beginning** of epochs due to the
+        # desire to access metrics by callbacks and the **end** of epochs,
+        # which would be hard to do if we reset at the end before they get a
+        # chance to use those values...
+        self.train_metrics = MetricCollection(
+            {
+                "acc": Accuracy(
+                    task="multiclass", num_classes=num_classes, average="weighted"
+                ),
+                "f1": F1Score(
+                    task="multiclass", num_classes=num_classes, average="weighted"
+                ),
+                "recall": Recall(
+                    task="multiclass", num_classes=num_classes, average="weighted"
+                ),
+                "precsion": Precision(
+                    task="multiclass", num_classes=num_classes, average="weighted"
+                ),
+            },
+            prefix="train/"
         )
-        self.val_f1 = F1Score(
-            num_classes=num_classes, average="weighted", task="multiclass"
-        )
-        self.test_f1 = F1Score(
-            num_classes=num_classes, average="weighted", task="multiclass"
-        )
-        # Track per-class F1 for separated logging
-        self.train_f1_perclass = F1Score(
-            num_classes=num_classes, average="none", task="multiclass"
-        )
-        self.val_f1_perclass = F1Score(
-            num_classes=num_classes, average="none", task="multiclass"
-        )
-        self.test_f1_perclass = F1Score(
-            num_classes=num_classes, average="none", task="multiclass"
-        )
+        self.val_metrics = self.train_metrics.clone(prefix="val/")
+        self.test_metrics = self.train_metrics.clone(prefix="test/")
 
-        self.train_recall = Recall(
-            num_classes=num_classes, average="weighted", task="multiclass"
+        # Some metrics that output per-class vectors. These will have to be
+        # logged manually in a loop since only scalars can be logged.
+        self.train_vec_metrics = MetricCollection(
+            {
+                "acc": Accuracy(
+                    task="multiclass", num_classes=num_classes, average="none"
+                ),
+                "f1": F1Score(
+                    task="multiclass", num_classes=num_classes, average="none"
+                ),
+            },
+            prefix="train/"
         )
-        self.val_recall = Recall(
-            num_classes=num_classes, average="weighted", task="multiclass"
-        )
-        self.test_recall = Recall(
-            num_classes=num_classes, average="weighted", task="multiclass"
-        )
-
-        self.train_precision = Precision(
-            num_classes=num_classes, average="weighted", task="multiclass"
-        )
-        self.val_precision = Precision(
-            num_classes=num_classes, average="weighted", task="multiclass"
-        )
-        self.test_precision = Precision(
-            num_classes=num_classes, average="weighted", task="multiclass"
-        )
+        self.val_vec_metrics = self.train_vec_metrics.clone(prefix="val/")
+        self.test_vec_metrics = self.train_vec_metrics.clone(prefix="test/")
 
         # for averaging loss across batches
         self.train_loss = MeanMetric()
@@ -162,14 +146,7 @@ class PTGLitModule(LightningModule):
 
     def on_train_start(self) -> None:
         """Lightning hook that is called when training begins."""
-        # by default lightning executes validation step sanity checks before training starts,
-        # so it's worth to make sure validation metrics don't store results from these checks
-        self.val_loss.reset()
-        self.val_acc.reset()
-        self.val_f1.reset()
-        self.val_recall.reset()
-        self.val_precision.reset()
-        self.val_f1_best.reset()
+        self.has_training_started = True
 
     def compute_loss(self, p, y, mask):
         """Compute the total loss for a batch
@@ -269,6 +246,11 @@ class PTGLitModule(LightningModule):
 
         return loss, probs, preds, y, source_vid, source_frame
 
+    def on_train_epoch_start(self) -> None:
+        # Reset relevant metric collections
+        self.train_metrics.reset()
+        self.train_vec_metrics.reset()
+
     def training_step(
         self,
         batch: Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
@@ -285,26 +267,13 @@ class PTGLitModule(LightningModule):
         """
         loss, probs, preds, targets, source_vid, source_frame = self.model_step(batch)
 
-        # update and log metrics
+        # update and log loss
+        # Don't want to log this on step because it causes some loggers (CSV)
+        # to create some pretty unreadable output.
         self.train_loss(loss)
-        self.train_acc(preds, targets[:, self.hparams.pred_frame_index])
-
         self.log(
-            "train/loss", self.train_loss, on_step=False, on_epoch=True, prog_bar=True
+            "train/loss", self.train_loss, prog_bar=True, on_step=False, on_epoch=True
         )
-        self.log(
-            "train/acc", self.train_acc, on_step=False, on_epoch=True, prog_bar=True
-        )
-
-        self.train_acc_perclass(preds, targets[:, self.hparams.pred_frame_index])
-        for c_i, c_acc in enumerate(self.train_acc_perclass.compute()):
-            self.log(
-                f"train/acc-per-class/c{c_i}",
-                c_acc,
-                prog_bar=False,
-                on_step=False,
-                on_epoch=True,
-            )
 
         # return loss or backpropagation will fail
         return {
@@ -320,21 +289,18 @@ class PTGLitModule(LightningModule):
         all_preds = torch.cat([o["preds"] for o in outputs])
         all_targets = torch.cat([o['targets'] for o in outputs])
 
-        self.train_f1(all_preds, all_targets)
-        self.train_recall(all_preds, all_targets)
-        self.train_precision(all_preds, all_targets)
-        self.log("train/f1", self.train_f1, prog_bar=True, on_epoch=True)
-        self.log("train/recall", self.train_recall, prog_bar=True, on_epoch=True)
-        self.log("train/precision", self.train_precision, prog_bar=True, on_epoch=True)
-        # vector metrics
-        self.train_f1_perclass(all_preds, all_targets)
-        for c_i, c_f1 in enumerate(self.train_f1_perclass.compute()):
-            self.log(
-                f"train/f1-per-class/c{c_i}",
-                c_f1,
-                prog_bar=False,
-                on_epoch=True,
-            )
+        scalar_metrics = self.train_metrics(all_preds, all_targets)
+        self.log_dict(scalar_metrics, prog_bar=True, on_epoch=True)
+
+        vec_metrics = self.train_vec_metrics(all_preds, all_targets)
+        for k, t in vec_metrics.items():
+            for i, v in enumerate(t):
+                self.log(f"{k}-class_{i}", v)
+
+    def on_validation_epoch_start(self) -> None:
+        # Reset relevant metric collections
+        self.val_metrics.reset()
+        self.val_vec_metrics.reset()
 
     def validation_step(
         self,
@@ -353,20 +319,7 @@ class PTGLitModule(LightningModule):
 
         # update and log metrics
         self.val_loss(loss)
-        self.val_acc(preds, targets[:, self.hparams.pred_frame_index])
-
-        self.log("val/loss", self.val_loss, on_step=False, on_epoch=True, prog_bar=True)
-        self.log("val/acc", self.val_acc, on_step=False, on_epoch=True, prog_bar=True)
-
-        self.val_acc_perclass(preds, targets[:, self.hparams.pred_frame_index])
-        for c_i, c_acc in enumerate(self.val_acc_perclass.compute()):
-            self.log(
-                f"val/acc-per-class/c{c_i}",
-                c_acc,
-                prog_bar=False,
-                on_step=False,
-                on_epoch=True,
-            )
+        self.log("val/loss", self.val_loss, prog_bar=True)
 
         # Only retain the truth and source vid/frame IDs for the final window
         # frame as this is the ultimately relevant result.
@@ -380,30 +333,30 @@ class PTGLitModule(LightningModule):
         }
 
     def validation_epoch_end(self, outputs: Union[EPOCH_OUTPUT, List[EPOCH_OUTPUT]]) -> None:
+        if not self.has_training_started:
+            return
+
         all_preds = torch.cat([o['preds'] for o in outputs])
         all_targets = torch.cat([o['targets'] for o in outputs])
 
-        self.val_f1(all_preds, all_targets)
-        self.val_recall(all_preds, all_targets)
-        self.val_precision(all_preds, all_targets)
-        self.log("val/f1", self.val_f1, prog_bar=True, on_epoch=True)
-        self.log("val/recall", self.val_recall, prog_bar=True, on_epoch=True)
-        self.log("val/precision", self.val_precision, prog_bar=True, on_epoch=True)
-        # vector metrics
-        self.val_f1_perclass(all_preds, all_targets)
-        for c_i, c_f1 in enumerate(self.val_f1_perclass.compute()):
-            self.log(
-                f"val/f1-per-class/c{c_i}",
-                c_f1,
-                prog_bar=False,
-                on_epoch=True,
-            )
+        scalar_metrics = self.val_metrics(all_preds, all_targets)
+        self.log_dict(scalar_metrics, prog_bar=True)
+
+        vec_metrics = self.val_vec_metrics(all_preds, all_targets)
+        for k, t in vec_metrics.items():
+            for i, v in enumerate(t):
+                self.log(f"{k}-class_{i}", v)
 
         # log `val_f1_best` as a value through `.compute()` return, instead of
         # as a metric object otherwise metric would be reset by lightning after
         # each epoch.
-        self.val_f1_best(self.val_f1.compute())
+        self.val_f1_best(self.val_metrics.f1.compute())
         self.log("val/f1_best", self.val_f1_best.compute(), prog_bar=True, on_epoch=True)
+
+    def on_test_epoch_start(self) -> None:
+        # Reset relevant metric collections
+        self.test_metrics.reset()
+        self.test_vec_metrics.reset()
 
     def test_step(
         self,
@@ -422,21 +375,7 @@ class PTGLitModule(LightningModule):
 
         # update and log metrics
         self.test_loss(loss)
-        self.test_acc(preds, targets[:, self.hparams.pred_frame_index])
-        self.log(
-            "test/loss", self.test_loss, on_step=False, on_epoch=True, prog_bar=True
-        )
-        self.log("test/acc", self.test_acc, on_step=False, on_epoch=True, prog_bar=True)
-
-        self.test_acc_perclass(preds, targets[:, self.hparams.pred_frame_index])
-        for c_i, c_acc in enumerate(self.test_acc_perclass.compute()):
-            self.log(
-                f"test/acc-per-class/c{c_i}",
-                c_acc,
-                prog_bar=False,
-                on_step=False,
-                on_epoch=True,
-            )
+        self.log("test/loss", self.test_loss, prog_bar=True)
 
         # Only retain the truth and source vid/frame IDs for the final window
         # frame as this is the ultimately relevant result.
@@ -453,22 +392,13 @@ class PTGLitModule(LightningModule):
         all_preds = torch.cat([o['preds'] for o in outputs])
         all_targets = torch.cat([o['targets'] for o in outputs])
 
-        # update and log metrics
-        self.test_f1(all_preds, all_targets)
-        self.test_recall(all_preds, all_targets)
-        self.test_precision(all_preds, all_targets)
-        self.log("test/f1", self.test_f1, on_step=False, on_epoch=True, prog_bar=True)
-        self.log("test/recall", self.test_recall, on_step=False, on_epoch=True, prog_bar=True)
-        self.log("test/precision", self.test_precision, on_step=False, on_epoch=True, prog_bar=True)
-        # vector metrics
-        self.test_f1_perclass(all_preds, all_targets)
-        for c_i, c_f1 in enumerate(self.test_f1_perclass.compute()):
-            self.log(
-                f"test/f1-per-class/c{c_i}",
-                c_f1,
-                prog_bar=False,
-                on_epoch=True,
-            )
+        scalar_metrics = self.test_metrics(all_preds, all_targets)
+        self.log_dict(scalar_metrics, prog_bar=True, on_epoch=True)
+
+        vec_metrics = self.test_vec_metrics(all_preds, all_targets)
+        for k, t in vec_metrics.items():
+            for i, v in enumerate(t):
+                self.log(f"{k}-class_{i}", v)
 
     def setup(self, stage: Optional[str] = None) -> None:
         """Lightning hook that is called at the beginning of fit (train + validate), validate,

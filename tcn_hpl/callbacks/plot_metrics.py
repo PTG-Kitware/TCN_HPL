@@ -174,8 +174,8 @@ class PlotMetrics(Callback):
         all_source_frames = torch.cat(self._train_all_source_frames)  # shape: #frames
 
         current_epoch = pl_module.current_epoch
-        curr_acc = pl_module.train_acc.compute()
-        curr_f1 = pl_module.train_f1.compute()
+        curr_acc = pl_module.train_metrics.acc.compute()
+        curr_f1 = pl_module.train_metrics.f1.compute()
 
         #
         # Plot per-video class predictions vs. GT across progressive frames in
@@ -265,8 +265,8 @@ class PlotMetrics(Callback):
         all_source_frames = torch.cat(self._val_all_source_frames)  # shape: #frames
 
         current_epoch = pl_module.current_epoch
-        curr_acc = pl_module.val_acc.compute()
-        curr_f1 = pl_module.val_f1.compute()
+        curr_acc = pl_module.val_metrics.acc.compute()
+        curr_f1 = pl_module.val_metrics.f1.compute()
         best_f1 = pl_module.val_f1_best.compute()
 
         #
@@ -359,8 +359,8 @@ class PlotMetrics(Callback):
         all_source_frames = torch.cat(self._val_all_source_frames)  # shape: #frames
 
         current_epoch = pl_module.current_epoch
-        test_acc = pl_module.test_acc.compute()
-        test_f1 = pl_module.test_f1.compute()
+        test_acc = pl_module.test_metrics.acc.compute()
+        test_f1 = pl_module.test_metrics.f1.compute()
 
         #
         # Plot per-video class predictions vs. GT across progressive frames in
