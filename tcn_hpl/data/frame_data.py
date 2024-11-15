@@ -51,7 +51,8 @@ class FramePoses:
     # Array of scores for each pose. Ostensibly the bbox score. Shape: (num_poses,)
     scores: npt.NDArray[float]
     # Pose join 2D positions in ascending joint ID order. If the joint is not
-    # present, 0s are used. Shape: (num_poses, num_joints, 2)
+    # present, 0s are used. Points in (x, y) format.
+    # Shape: (num_poses, num_joints, 2)
     joint_positions: npt.NDArray[float]
     # Poise joint scores. Shape: (num_poses, num_joints)
     joint_scores: npt.NDArray[float]

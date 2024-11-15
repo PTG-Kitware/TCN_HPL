@@ -160,10 +160,16 @@ class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
             # pass.
             det_rand = torch.rand(n_dets, 5).numpy()
 
-            # Jitter box locations and sizes.
+            # Jitter box locations.
+            # Basing the jitter on per-box width and height dimensions. The
+            # intuition is that we should jitter boxes in proportion to their
+            # screen space so that (a) their relative spatial applicability is
+            # maintained and (b) an object detector is less likely to provide
+            # noisy boxes beyond the relative scope of the object's footprint.
             xy_jitter_max = all_box_coords[:, 2:] * self.det_loc_jitter
             xy_jitter = (xy_jitter_max * 2 * det_rand[:, :2]) - xy_jitter_max
             all_box_coords[:, :2] += xy_jitter
+            # Jitter box sizes.
             wh_jitter_max = all_box_coords[:, 2:] * self.det_wh_jitter
             wh_jitter = (wh_jitter_max * 2 * det_rand[:, 2:4]) - wh_jitter_max
             all_box_coords[:, 2:] += wh_jitter
@@ -240,9 +246,19 @@ class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
             all_pose_scores[all_pose_scores < 0] = 0
             all_pose_scores[all_pose_scores > 1] = 1
             # Jitter pose keypoint locations
+            # Calculate per-pose containing box width and height to base jitter
+            # off of instead of the raw frame width and height. The intuition
+            # is that a pose estimation model is less likely to provide noisy
+            # keypoints beyond the relative scope of a skeleton's footprint.
+            # This will mean poses that cover a small footprint are be smeared
+            # out of proportion relative to poses that cover a much larger
+            # footprint, which would likely be afforded more noise.
             xy_jitter_max = (
-                np.asarray([frame_width, frame_height]) * self.pose_kp_loc_jitter
-            )
+                np.asarray([
+                    all_pose_kps[:, :, 0].max(axis=1) - all_pose_kps[:, :, 0].min(axis=1),
+                    all_pose_kps[:, :, 1].max(axis=1) - all_pose_kps[:, :, 1].min(axis=1),
+                ]).T * self.pose_kp_loc_jitter
+            )[:, None, :]  # shape: [n_poses, 1, 2]
             xy_jitter = (xy_jitter_max * 2 * pose_kp_rand[:, :, :2]) - xy_jitter_max
             all_pose_kps += xy_jitter
             # Jitter pose keypoint scores & clamp
@@ -298,15 +314,23 @@ def test():
     import matplotlib.pyplot as plt
     from tcn_hpl.data.frame_data import FrameObjectDetections, FramePoses
 
-    torch.manual_seed(0)
+    torch.manual_seed(42)
     # Prime the pump
     torch.rand(1)
 
     rng = np.random.RandomState(0)
     n_poses = 3
     pose_scores = rng.uniform(0, 1, n_poses)
-    pose_joint_locs = rng.randint(0, 500, (n_poses, 22, 2)).astype(float)
     pose_joint_scores = rng.uniform(0, 1, (n_poses, 22))
+    n_kps = 22
+    pose_joint_locs = np.stack([
+        # One "pose" in the upper-right
+        np.stack([rng.uniform(250, 500, n_kps), rng.uniform(0, 250, n_kps)], axis=1),
+        # One "pose" covering the bottom half
+        np.stack([rng.uniform(0, 500, n_kps), rng.uniform(250, 500, n_kps)], axis=1),
+        # One "pose" that's small in the center
+        np.stack([rng.uniform(225, 275, n_kps), rng.uniform(225, 275, n_kps)], axis=1),
+    ])
 
     target_wh = 500, 500
     frame1 = FrameData(
@@ -327,15 +351,15 @@ def test():
     window = [frame1] * 25
 
     augment = FrameDataRotateScaleTranslateJitter(
-        translate=0.25,
+        translate=0.2,
         scale=[0.7, 1.3],
-        rotate=[-25, 25],
-        det_loc_jitter=0,  # 0.03,
-        det_wh_jitter=0,  # 0.25,
-        pose_kp_loc_jitter=0,  # 0.035,
-        dets_score_jitter=0.4,
-        pose_score_jitter=0.4,
-        pose_kp_score_jitter=0.4,
+        rotate=[-60, 60],
+        det_loc_jitter=0.2,
+        det_wh_jitter=0.2,
+        pose_kp_loc_jitter=0.05,
+        dets_score_jitter=0.2,
+        pose_score_jitter=0.05,
+        pose_kp_score_jitter=0.2,
     )
 
     # Idiot check.
@@ -350,7 +374,7 @@ def test():
     axes = axes.ravel()
     axes[0].set_title("Before Augmentation")
     axes[0].set_xlim(0, target_wh[0])
-    axes[0].set_ylim(0, target_wh[1])
+    axes[0].set_ylim(target_wh[1], 0)
     for frame in window:
         for box in frame.object_detections.boxes:
             x, y, w, h = box
@@ -366,7 +390,7 @@ def test():
         aug_window = augment(window)
         axes[ax_i].set_title(f"Separate Augmentation [{ax_i}]")
         axes[ax_i].set_xlim(0, target_wh[0])
-        axes[ax_i].set_ylim(0, target_wh[1])
+        axes[ax_i].set_ylim(target_wh[1], 0)
         for frame in aug_window:
             for box in frame.object_detections.boxes:
                 x, y, w, h = box
@@ -387,7 +411,7 @@ def test():
     for f_i, frame in enumerate(augmented_window):
         axes[f_i].set_title(f"Augmented Frame [{f_i}]")
         axes[f_i].set_xlim(0, target_wh[0])
-        axes[f_i].set_ylim(0, target_wh[1])
+        axes[f_i].set_ylim(target_wh[1], 0)
         for box in frame.object_detections.boxes:
             x, y, w, h = box
             rect = plt.Rectangle(
