@@ -107,8 +107,8 @@ class PTGDataModule(LightningDataModule):
         batch_size: int,
         num_workers: int,
         target_framerate: float,
-        epoch_length: int,
-        pin_memory: bool,
+        epoch_sample_factor: float,
+        pin_memory: bool = False,
     ) -> None:
         """Initialize a `PTGDataModule`.
 
@@ -130,10 +130,13 @@ class PTGDataModule(LightningDataModule):
             object detections to use for training.
         :param coco_test_poses: Path to the COCO file with test-split
             pose estimations to use for training.
-        :vector_cache_dir: Directory path to store cache files related to
-            dataset vectory computation.
         :param batch_size: The batch size. Defaults to `64`.
         :param num_workers: The number of workers. Defaults to `0`.
+        :param target_framerate: Hz rate for loaded datasets to be checked
+            against and normalized to if there is faster rate data in the mix.
+        :param epoch_sample_factor: A multiplicative factor on the size of a
+            dataset for a weighted random sampler to sample over. This is
+            currently applicable to the train and validation dataloaders.
         :param pin_memory: Whether to pin memory. Defaults to `False`.
         """
         super().__init__()
@@ -186,7 +189,7 @@ class PTGDataModule(LightningDataModule):
         """
         train_sampler = torch.utils.data.WeightedRandomSampler(
             self.data_train.window_weights,
-            self.hparams.epoch_length,
+            self.hparams.epoch_sample_factor * len(self.data_train),
             replacement=True,
             generator=None,
         )
@@ -205,7 +208,7 @@ class PTGDataModule(LightningDataModule):
         """
         val_sampler = torch.utils.data.WeightedRandomSampler(
             self.data_val.window_weights,
-            len(self.data_val) * 3,
+            self.hparams.epoch_sample_factor * len(self.data_val),
             replacement=True,
             generator=None,
         )

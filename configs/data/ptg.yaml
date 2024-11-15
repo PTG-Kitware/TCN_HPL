@@ -42,5 +42,5 @@ coco_test_poses: ""
 batch_size: 128
 num_workers: 0
 target_framerate: 15
-epoch_length: 10000
+epoch_sample_factor: 1
 pin_memory: True
