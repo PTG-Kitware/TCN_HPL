@@ -20,7 +20,6 @@ net:
   num_stages: 4
   num_layers: 5
   num_f_maps: 128
-  # dim: 204
   dim: 128
   num_classes: ${model.num_classes}
 

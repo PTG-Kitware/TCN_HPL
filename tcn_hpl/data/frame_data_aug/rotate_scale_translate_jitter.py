@@ -353,12 +353,12 @@ def test():
     augment = FrameDataRotateScaleTranslateJitter(
         translate=0.2,
         scale=[0.7, 1.3],
-        rotate=[-60, 60],
+        rotate=[-30, 30],
         det_loc_jitter=0.2,
         det_wh_jitter=0.2,
-        pose_kp_loc_jitter=0.05,
+        pose_kp_loc_jitter=0.075,
         dets_score_jitter=0.2,
-        pose_score_jitter=0.05,
+        pose_score_jitter=0.2,
         pose_kp_score_jitter=0.2,
     )
 

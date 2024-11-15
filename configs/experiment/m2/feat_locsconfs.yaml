@@ -28,12 +28,6 @@ tags: ["m2", "ms_tcn", "debug"]
 
 seed: 12345
 
-#callbacks:
-#  model_checkpoint:
-#    # save all ~80MB checkpoints for post-training investigation.
-#    # Total: ~45GB
-#    save_top_k: 500
-
 trainer:
   min_epochs: 50
   max_epochs: 500
@@ -42,15 +36,19 @@ trainer:
 model:
   num_classes: 9  # number of activity classification classes
   compile: false
+  scheduler:
+    # Code change to track train/loss instead of val/loss.
+    factor: 0.9
+    patience: 10
   net:
     # Length of feature vector for a single frame.
     # Currently derived from the parameterization of dataset vectorizer.
     dim: 102
 
-#    # Once upon a time defaults
-#    num_stages: 4
-#    num_layers: 10
-#    num_f_maps: 64
+callbacks:
+  early_stopping:
+    # Just wait out the whole set for progress
+    patience: 500
 
 data:
   coco_train_activities: "${paths.coco_file_root}/TRAIN-activity_truth.coco.json"
@@ -65,7 +63,7 @@ data:
   coco_test_objects: "${paths.coco_file_root}/TEST-object_detections.coco.json"
   coco_test_poses: "${paths.coco_file_root}/TEST-pose_estimations.coco.json"
 
-  batch_size: 512
+  batch_size: 256
   num_workers: 16
   target_framerate: 15  # BBN Hololens2 Framerate
   epoch_sample_factor: 3  # 3x the dataset size iterations for train/val
@@ -96,7 +94,15 @@ data:
           pose_throughput_std: 0.2
           fixed_pattern: false
         - _target_: tcn_hpl.data.frame_data_aug.rotate_scale_translate_jitter.FrameDataRotateScaleTranslateJitter
-          # Using default parameters to start
+          translate: 0.2
+          scale: [0.7, 1.3]
+          rotate: [-30, 30]
+          det_loc_jitter: 0.2
+          det_wh_jitter: 0.2
+          pose_kp_loc_jitter: 0.075
+          dets_score_jitter: 0.2
+          pose_score_jitter: 0.2
+          pose_kp_score_jitter: 0.2
   val_dataset:
     # Augmentations on windows of frame data before performing vectorization.
     # Sharing transform with training dataset as it is only the drop-out aug to
