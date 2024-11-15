@@ -161,9 +161,7 @@ class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
             det_rand = torch.rand(n_dets, 5).numpy()
 
             # Jitter box locations and sizes.
-            xy_jitter_max = (
-                np.asarray([frame_width, frame_height]) * self.det_loc_jitter
-            )
+            xy_jitter_max = all_box_coords[:, 2:] * self.det_loc_jitter
             xy_jitter = (xy_jitter_max * 2 * det_rand[:, :2]) - xy_jitter_max
             all_box_coords[:, :2] += xy_jitter
             wh_jitter_max = all_box_coords[:, 2:] * self.det_wh_jitter
