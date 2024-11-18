@@ -14,7 +14,7 @@ from .tcn_dataset import TCNDataset
 
 def create_dataset_from_hydra(
     model_hydra_conf: Path,
-    split: str = "test",
+    split: str = "pred",
 ) -> "TCNDataset":
     """
     Create a TCNDataset for some specified split based on the Hydra
@@ -95,6 +95,7 @@ class PTGDataModule(LightningDataModule):
         train_dataset: TCNDataset,
         val_dataset: TCNDataset,
         test_dataset: TCNDataset,
+        pred_dataset: TCNDataset,
         coco_train_activities: str,
         coco_train_objects: str,
         coco_train_poses: str,
@@ -144,12 +145,19 @@ class PTGDataModule(LightningDataModule):
         # this line allows to access init params with 'self.hparams' attribute
         # also ensures init params will be stored in ckpt
         self.save_hyperparameters(
-            logger=False, ignore=["train_dataset", "val_dataset", "test_dataset"]
+            logger=False,
+            ignore=[
+                "train_dataset",
+                "val_dataset",
+                "test_dataset",
+                "pred_dataset",
+            ],
         )
 
         self.data_train: Optional[TCNDataset] = train_dataset
         self.data_val: Optional[TCNDataset] = val_dataset
         self.data_test: Optional[TCNDataset] = test_dataset
+        self.data_pred: Optional[TCNDataset] = pred_dataset
 
     def setup(self, stage: Optional[str] = None) -> None:
         """Load data. Set variables: `self.data_train`, `self.data_val`, `self.data_test`.
