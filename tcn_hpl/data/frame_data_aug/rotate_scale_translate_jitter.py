@@ -46,33 +46,48 @@ class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
             a chosen center of rotation. The values given should be in
             ascending order.
         det_loc_jitter:
-            A relative amount to randomly adjust the position, height and width
-            of frame data. Locations jitter is relative to the height and width
-            of the frame. Box width and height jitter is relative to the width
-            and height of the affected box. This should be in the [0, 1] range.
+            A relative amount to randomly adjust the position of frame data
+            object detection locations. This relative amount is applied to the
+            width and height dimensions of individual detection boxes to yield
+            the true amount of movement. This should be in the [0, 1] range.
+        det_wh_jitter:
+            A relative amount to randomly adjust the width and height of frame
+            data object detection boxes. This relative amount is applied to the
+            width and height dimensions of individual detections boxes to yield
+            the true amount of adjustment. This should be in the [0, 1] range.
         dets_score_jitter:
             Randomly adjust the object detection confidence value within +/-
-            the given value. The resulting value is clamped within the [0, 1]
-            range.
+            the given value as multiplied against the input score.
+            The resulting value is clamped within the [0, 1] range.
         pose_score_jitter:
-            Randomly adjust the pose keypoint confidence value within +/-
-            the given value. The resulting value is clamped within the [0, 1]
+            Randomly adjust the pose detection confidence value within +/-
+            the given value as multiplied against the input score.
+            The resulting value is clamped within the [0, 1] range.
+        pose_kp_loc_jitter:
+            A relative amount to randomly adjust the location of keypoint
+            locations. This relative amount is applied to the width and height
+            dimensions of the **axis-aligned footprint** of the pose skeleton
+            to yield the true amount of movement. This should be in the [0, 1]
             range.
+        pose_kp_score_jitter:
+            Randomly adjust the pose keypoint confidence value within +/-
+            the given value as multiplied against the input score.
+            The resulting value is clamped within the [0, 1] range.
     TODO: Some maximum tolerance for accepting boxes that are outside of the
           image space?
     """
 
     def __init__(
         self,
-        translate: float = 0.1,
-        scale: tg.Sequence[float] = (0.9, 1.1),
-        rotate: tg.Sequence[float] = (-10, 10),
-        det_loc_jitter: float = 0.025,
-        det_wh_jitter: float = 0.1,
-        dets_score_jitter: float = 0.1,
-        pose_score_jitter: float = 0.1,
-        pose_kp_loc_jitter: float = 0.025,
-        pose_kp_score_jitter: float = 0.1,
+        translate: float = 0.,
+        scale: tg.Sequence[float] = (1., 1.),
+        rotate: tg.Sequence[float] = (0., 0.),
+        det_loc_jitter: float = 0.,
+        det_wh_jitter: float = 0.,
+        dets_score_jitter: float = 0.,
+        pose_score_jitter: float = 0.,
+        pose_kp_loc_jitter: float = 0.,
+        pose_kp_score_jitter: float = 0.,
     ):
         super().__init__()
         self.translate = translate
@@ -177,7 +192,7 @@ class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
             score_jitter = (
                 self.dets_score_jitter * 2 * det_rand[:, 4]
             ) - self.dets_score_jitter
-            all_box_scores += score_jitter
+            all_box_scores *= (1 + score_jitter)
             all_box_scores[all_box_scores < 0] = 0
             all_box_scores[all_box_scores > 1] = 1
 
@@ -242,7 +257,7 @@ class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
             score_jitter = (
                 self.pose_score_jitter * 2 * pose_score_rand
             ) - self.pose_score_jitter
-            all_pose_scores += score_jitter
+            all_pose_scores *= (1 + score_jitter)
             all_pose_scores[all_pose_scores < 0] = 0
             all_pose_scores[all_pose_scores > 1] = 1
             # Jitter pose keypoint locations
@@ -265,7 +280,7 @@ class FrameDataRotateScaleTranslateJitter(torch.nn.Module):
             score_jitter = (
                 self.pose_kp_score_jitter * 2 * pose_kp_rand[:, :, 2]
             ) - self.pose_kp_score_jitter
-            all_pose_kp_scores += score_jitter
+            all_pose_kp_scores *= (1 + score_jitter)
             all_pose_kp_scores[all_pose_kp_scores < 0] = 0
             all_pose_kp_scores[all_pose_kp_scores > 1] = 1
 
@@ -351,15 +366,15 @@ def test():
     window = [frame1] * 25
 
     augment = FrameDataRotateScaleTranslateJitter(
-        translate=0.2,
-        scale=[0.7, 1.3],
-        rotate=[-30, 30],
-        det_loc_jitter=0.2,
-        det_wh_jitter=0.2,
-        pose_kp_loc_jitter=0.075,
-        dets_score_jitter=0.2,
-        pose_score_jitter=0.2,
-        pose_kp_score_jitter=0.2,
+        translate=0.05,
+        scale=[0.9, 1.1],
+        rotate=[-5, 5],
+        det_loc_jitter=0.02,
+        det_wh_jitter=0.02,
+        pose_kp_loc_jitter=0.005,
+        # dets_score_jitter=0.05,
+        # pose_score_jitter=0.05,
+        # pose_kp_score_jitter=0.05,
     )
 
     # Idiot check.

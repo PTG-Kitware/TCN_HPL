@@ -523,7 +523,7 @@ def test_dataset_for_input(
         top_k = 1,
         num_classes = 7,
         use_joint_confs = True,
-        use_pixel_norm = False,
+        use_pixel_norm = True,
         use_joint_obj_offsets = False,
         background_idx = 0,
     )

@@ -1,6 +1,5 @@
 from typing import Any, Dict, Optional, Tuple, Union, List
 
-from numpy.lib.utils import source
 from pytorch_lightning import LightningModule
 import torch
 from pytorch_lightning.utilities.types import EPOCH_OUTPUT, STEP_OUTPUT
