@@ -340,7 +340,9 @@ class TCNDataset(Dataset):
                     else:
                         frame_poses = empty_pose
                     # import ipdb; ipdb.set_trace()
-                    vid_frame_data.append(FrameData(frame_dets, frame_poses, frame_size))
+                    vid_frame_data.append(
+                        FrameData(frame_dets, frame_poses, frame_size)
+                    )
 
                 # Compose a list of indices into frame_data that this video's
                 # worth of content resides.
@@ -520,31 +522,37 @@ def test_dataset_for_input(
     from tcn_hpl.data.vectorize.locs_and_confs import LocsAndConfs
 
     vectorize = LocsAndConfs(
-        top_k = 1,
-        num_classes = 7,
-        use_joint_confs = True,
-        use_pixel_norm = True,
-        use_joint_obj_offsets = False,
-        background_idx = 0,
+        top_k=1,
+        num_classes=7,
+        use_joint_confs=True,
+        use_pixel_norm=True,
+        use_joint_obj_offsets=False,
+        background_idx=0,
     )
 
     # TODO: Some method of configuring which augmentations to use.
-    from tcn_hpl.data.frame_data_aug.rotate_scale_translate_jitter import FrameDataRotateScaleTranslateJitter
-    from tcn_hpl.data.frame_data_aug.window_frame_dropout import DropoutFrameDataTransform
+    from tcn_hpl.data.frame_data_aug.rotate_scale_translate_jitter import (
+        FrameDataRotateScaleTranslateJitter,
+    )
+    from tcn_hpl.data.frame_data_aug.window_frame_dropout import (
+        DropoutFrameDataTransform,
+    )
     import torchvision.transforms
 
-    transform_frame_data = torchvision.transforms.Compose([
-        DropoutFrameDataTransform(
-            frame_rate=15,
-            dets_throughput_mean=14.5,
-            pose_throughput_mean=10,
-            dets_latency=0,
-            pose_latency=1/10,  # (1 / 10) - (1 / 14.5),
-            dets_throughput_std=0.2,
-            pose_throughput_std=0.2,
-        ),
-        FrameDataRotateScaleTranslateJitter(),
-    ])
+    transform_frame_data = torchvision.transforms.Compose(
+        [
+            DropoutFrameDataTransform(
+                frame_rate=15,
+                dets_throughput_mean=14.5,
+                pose_throughput_mean=10,
+                dets_latency=0,
+                pose_latency=1 / 10,  # (1 / 10) - (1 / 14.5),
+                dets_throughput_std=0.2,
+                pose_throughput_std=0.2,
+            ),
+            FrameDataRotateScaleTranslateJitter(),
+        ]
+    )
 
     dataset = TCNDataset(
         window_size=window_size,
