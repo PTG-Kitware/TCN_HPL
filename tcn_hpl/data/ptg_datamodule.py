@@ -170,19 +170,21 @@ class PTGDataModule(LightningDataModule):
         :param stage: The stage to setup. Either `"fit"`, `"validate"`, `"test"`, or `"predict"`. Defaults to ``None``.
         """
         # load and split datasets only if not loaded already
-        if not self.data_train and not self.data_val and not self.data_test:
+        if (stage == "train" or stage == "fit") and not self.data_train:
             self.data_train.load_data_offline(
                 kwcoco.CocoDataset(self.hparams.coco_train_activities),
                 kwcoco.CocoDataset(self.hparams.coco_train_objects),
                 kwcoco.CocoDataset(self.hparams.coco_train_poses),
                 self.hparams.target_framerate,
             )
+        if stage == "validate" and not self.data_val:
             self.data_val.load_data_offline(
                 kwcoco.CocoDataset(self.hparams.coco_validation_activities),
                 kwcoco.CocoDataset(self.hparams.coco_validation_objects),
                 kwcoco.CocoDataset(self.hparams.coco_validation_poses),
                 self.hparams.target_framerate,
             )
+        if stage == "test" and  not self.data_test:
             self.data_test.load_data_offline(
                 kwcoco.CocoDataset(self.hparams.coco_test_activities),
                 kwcoco.CocoDataset(self.hparams.coco_test_objects),
@@ -197,7 +199,7 @@ class PTGDataModule(LightningDataModule):
         """
         train_sampler = torch.utils.data.WeightedRandomSampler(
             self.data_train.window_weights,
-            self.hparams.epoch_sample_factor * len(self.data_train),
+            int(round(self.hparams.epoch_sample_factor * len(self.data_train))),
             replacement=True,
             generator=None,
         )
@@ -214,19 +216,19 @@ class PTGDataModule(LightningDataModule):
 
         :return: The validation dataloader.
         """
-        val_sampler = torch.utils.data.WeightedRandomSampler(
-            self.data_val.window_weights,
-            self.hparams.epoch_sample_factor * len(self.data_val),
-            replacement=True,
-            generator=None,
-        )
+        # val_sampler = torch.utils.data.WeightedRandomSampler(
+        #     self.data_val.window_weights,
+        #     self.hparams.epoch_sample_factor * len(self.data_val),
+        #     replacement=True,
+        #     generator=None,
+        # )
         return DataLoader(
             dataset=self.data_val,
             batch_size=self.hparams.batch_size,
             num_workers=self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
-            # shuffle=False,
-            sampler=val_sampler,
+            shuffle=False,
+            # sampler=val_sampler,
         )
 
     def test_dataloader(self) -> DataLoader[Any]:
