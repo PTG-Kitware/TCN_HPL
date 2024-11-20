@@ -177,7 +177,7 @@ class PTGDataModule(LightningDataModule):
                 kwcoco.CocoDataset(self.hparams.coco_train_poses),
                 self.hparams.target_framerate,
             )
-        if stage == "validate" and not self.data_val:
+        if (stage == "validate" or stage == "fit") and not self.data_val:
             self.data_val.load_data_offline(
                 kwcoco.CocoDataset(self.hparams.coco_validation_activities),
                 kwcoco.CocoDataset(self.hparams.coco_validation_objects),
