@@ -361,6 +361,8 @@ class PlotMetrics(Callback):
         all_source_vids = torch.cat(self._val_all_source_vids)  # shape: #frames
         all_source_frames = torch.cat(self._val_all_source_frames)  # shape: #frames
 
+        #import ipdb; ipdb.set_trace()
+
         current_epoch = pl_module.current_epoch
         test_acc = pl_module.test_acc.compute()
         test_f1 = pl_module.test_f1.compute()
@@ -378,18 +380,26 @@ class PlotMetrics(Callback):
         for i in range(len(all_preds)):
             frame_index = all_source_frames[i]
             video_id = all_source_vids[i]
+            '''
             # This list could be as long as the number of videos in the dset
             matching_frame_indexes = torch.where(all_source_frames == frame_index)[0]
             assert video_id in all_source_vids[matching_frame_indexes]
             sub_index = torch.where(all_source_vids[matching_frame_indexes] == video_id)
-            image_id = int(matching_frame_indexes[sub_index])
+            frame_index = int(matching_frame_indexes[sub_index])
+            '''
+            # Now get the image_id that matches the frame_index and video_id.
+            sorted_img_ids_for_one_video = acts_dset.index.vidid_to_gids[int(video_id)]
+            image_id = sorted_img_ids_for_one_video[frame_index]
+            # Sanity check: this image_id corresponds to the frame_index and video_id
+            assert acts_dset.index.imgs[image_id]['frame_index'] == frame_index
+            assert acts_dset.index.imgs[image_id]['video_id'] == video_id
 
             ann = {
+                "image_id": image_id,
+                "category_id": all_preds[i],
                 "score": all_probs[i][all_preds[i]],
                 "prob": all_probs[i],
-                "category_id": all_preds[i],
-                "image_id": image_id
-            }        
+            }
             acts_dset.add_annotation(**ann)  
         acts_dset.dump(acts_dset.fpath, newlines=True)  
 
