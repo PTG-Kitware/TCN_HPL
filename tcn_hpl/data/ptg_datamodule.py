@@ -14,7 +14,7 @@ from .tcn_dataset import TCNDataset
 
 def create_dataset_from_hydra(
     model_hydra_conf: Path,
-    split: str = "test",
+    split: str = "pred",
 ) -> "TCNDataset":
     """
     Create a TCNDataset for some specified split based on the Hydra
@@ -95,6 +95,7 @@ class PTGDataModule(LightningDataModule):
         train_dataset: TCNDataset,
         val_dataset: TCNDataset,
         test_dataset: TCNDataset,
+        pred_dataset: TCNDataset,
         coco_train_activities: str,
         coco_train_objects: str,
         coco_train_poses: str,
@@ -107,8 +108,8 @@ class PTGDataModule(LightningDataModule):
         batch_size: int,
         num_workers: int,
         target_framerate: float,
-        epoch_length: int,
-        pin_memory: bool,
+        epoch_sample_factor: float,
+        pin_memory: bool = False,
     ) -> None:
         """Initialize a `PTGDataModule`.
 
@@ -130,10 +131,13 @@ class PTGDataModule(LightningDataModule):
             object detections to use for training.
         :param coco_test_poses: Path to the COCO file with test-split
             pose estimations to use for training.
-        :vector_cache_dir: Directory path to store cache files related to
-            dataset vectory computation.
         :param batch_size: The batch size. Defaults to `64`.
         :param num_workers: The number of workers. Defaults to `0`.
+        :param target_framerate: Hz rate for loaded datasets to be checked
+            against and normalized to if there is faster rate data in the mix.
+        :param epoch_sample_factor: A multiplicative factor on the size of a
+            dataset for a weighted random sampler to sample over. This is
+            currently applicable to the train and validation dataloaders.
         :param pin_memory: Whether to pin memory. Defaults to `False`.
         """
         super().__init__()
@@ -141,12 +145,19 @@ class PTGDataModule(LightningDataModule):
         # this line allows to access init params with 'self.hparams' attribute
         # also ensures init params will be stored in ckpt
         self.save_hyperparameters(
-            logger=False, ignore=["train_dataset", "val_dataset", "test_dataset"]
+            logger=False,
+            ignore=[
+                "train_dataset",
+                "val_dataset",
+                "test_dataset",
+                "pred_dataset",
+            ],
         )
 
         self.data_train: Optional[TCNDataset] = train_dataset
         self.data_val: Optional[TCNDataset] = val_dataset
         self.data_test: Optional[TCNDataset] = test_dataset
+        self.data_pred: Optional[TCNDataset] = pred_dataset
 
     def setup(self, stage: Optional[str] = None) -> None:
         """Load data. Set variables: `self.data_train`, `self.data_val`, `self.data_test`.
@@ -159,19 +170,21 @@ class PTGDataModule(LightningDataModule):
         :param stage: The stage to setup. Either `"fit"`, `"validate"`, `"test"`, or `"predict"`. Defaults to ``None``.
         """
         # load and split datasets only if not loaded already
-        if not self.data_train and not self.data_val and not self.data_test:
+        if (stage == "train" or stage == "fit") and not self.data_train:
             self.data_train.load_data_offline(
                 kwcoco.CocoDataset(self.hparams.coco_train_activities),
                 kwcoco.CocoDataset(self.hparams.coco_train_objects),
                 kwcoco.CocoDataset(self.hparams.coco_train_poses),
                 self.hparams.target_framerate,
             )
+        if stage == "validate" and not self.data_val:
             self.data_val.load_data_offline(
                 kwcoco.CocoDataset(self.hparams.coco_validation_activities),
                 kwcoco.CocoDataset(self.hparams.coco_validation_objects),
                 kwcoco.CocoDataset(self.hparams.coco_validation_poses),
                 self.hparams.target_framerate,
             )
+        if stage == "test" and  not self.data_test:
             self.data_test.load_data_offline(
                 kwcoco.CocoDataset(self.hparams.coco_test_activities),
                 kwcoco.CocoDataset(self.hparams.coco_test_objects),
@@ -186,7 +199,7 @@ class PTGDataModule(LightningDataModule):
         """
         train_sampler = torch.utils.data.WeightedRandomSampler(
             self.data_train.window_weights,
-            self.hparams.epoch_length,
+            int(round(self.hparams.epoch_sample_factor * len(self.data_train))),
             replacement=True,
             generator=None,
         )
@@ -203,19 +216,19 @@ class PTGDataModule(LightningDataModule):
 
         :return: The validation dataloader.
         """
-        val_sampler = torch.utils.data.WeightedRandomSampler(
-            self.data_val.window_weights,
-            len(self.data_val) * 3,
-            replacement=True,
-            generator=None,
-        )
+        # val_sampler = torch.utils.data.WeightedRandomSampler(
+        #     self.data_val.window_weights,
+        #     self.hparams.epoch_sample_factor * len(self.data_val),
+        #     replacement=True,
+        #     generator=None,
+        # )
         return DataLoader(
             dataset=self.data_val,
             batch_size=self.hparams.batch_size,
             num_workers=self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
-            # shuffle=False,
-            sampler=val_sampler,
+            shuffle=False,
+            # sampler=val_sampler,
         )
 
     def test_dataloader(self) -> DataLoader[Any]:

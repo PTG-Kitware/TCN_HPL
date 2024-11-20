@@ -38,6 +38,16 @@ class FrameObjectDetections:
     def __bool__(self):
         return bool(self.boxes.size)
 
+    def __eq__(self, other):
+        return (
+            (self.boxes == other.boxes).all()
+            and (self.labels == other.labels).all()
+            and (self.scores == other.scores).all()
+        )
+
+    def __ne__(self, other):
+        return not (self == other)
+
 
 @dataclass
 class FramePoses:
@@ -51,7 +61,8 @@ class FramePoses:
     # Array of scores for each pose. Ostensibly the bbox score. Shape: (num_poses,)
     scores: npt.NDArray[float]
     # Pose join 2D positions in ascending joint ID order. If the joint is not
-    # present, 0s are used. Shape: (num_poses, num_joints, 2)
+    # present, 0s are used. Points in (x, y) format.
+    # Shape: (num_poses, num_joints, 2)
     joint_positions: npt.NDArray[float]
     # Poise joint scores. Shape: (num_poses, num_joints)
     joint_scores: npt.NDArray[float]
@@ -66,6 +77,16 @@ class FramePoses:
 
     def __bool__(self):
         return bool(self.scores.size)
+
+    def __eq__(self, other):
+        return (
+            (self.scores == other.scores).all()
+            and (self.joint_positions == other.joint_positions).all()
+            and (self.joint_scores == other.joint_scores).all()
+        )
+
+    def __ne__(self, other):
+        return not (self == other)
 
 
 @dataclass
@@ -114,3 +135,13 @@ class FrameData:
             not.
         """
         return bool(self.object_detections) or bool(self.poses)
+
+    def __eq__(self, other):
+        return (
+            (self.object_detections == other.object_detections)
+            and (self.poses == other.poses)
+            and (self.size == other.size)
+        )
+
+    def __ne__(self, other):
+        return not (self == other)
