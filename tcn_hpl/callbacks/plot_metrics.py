@@ -10,6 +10,7 @@ import seaborn as sns
 from pytorch_lightning.utilities.types import STEP_OUTPUT
 from sklearn.metrics import confusion_matrix
 import torch
+import kwcoco
 
 try:
     from aim import Image
@@ -336,6 +337,7 @@ class PlotMetrics(Callback):
         batch: Any,
         batch_idx: int,
         dataloader_idx: int,
+        preds_dset_output_fpath: Path = "./tcn_activity_predictions.kwcoco.json"
     ) -> None:
         """Called when the test batch ends."""
         # Re-using validation lists since test phase does not collide with
@@ -345,6 +347,7 @@ class PlotMetrics(Callback):
         self._val_all_targets.append(outputs["targets"].cpu())
         self._val_all_source_vids.append(outputs["source_vid"].cpu())
         self._val_all_source_frames.append(outputs["source_frame"].cpu())
+        self._preds_dset_output_fpath = preds_dset_output_fpath
 
     def on_test_epoch_end(
         self, trainer: "pl.Trainer", pl_module: "pl.LightningModule"
@@ -361,6 +364,35 @@ class PlotMetrics(Callback):
         current_epoch = pl_module.current_epoch
         test_acc = pl_module.test_acc.compute()
         test_f1 = pl_module.test_f1.compute()
+
+        # Create activity predictions KWCOCO JSON
+        truth_dset_fpath = trainer.datamodule.hparams["coco_test_activities"]
+        truth_dset = kwcoco.CocoDataset(truth_dset_fpath)
+        acts_dset = kwcoco.CocoDataset()
+        acts_dset.fpath = self._preds_dset_output_fpath
+        acts_dset.dataset['videos'] = truth_dset.dataset['videos']
+        acts_dset.dataset['images'] = truth_dset.dataset['images']
+        acts_dset.index.build(acts_dset)
+        acts_dset.dataset['categories'] = truth_dset.dataset['categories']
+        # Create numpy lookup tables
+        for i in range(len(all_preds)):
+            frame_index = all_source_frames[i]
+            video_id = all_source_vids[i]
+            # This list could be as long as the number of videos in the dset
+            matching_frame_indexes = torch.where(all_source_frames == frame_index)[0]
+            assert video_id in all_source_vids[matching_frame_indexes]
+            sub_index = torch.where(all_source_vids[matching_frame_indexes] == video_id)
+            image_id = int(matching_frame_indexes[sub_index])
+
+            ann = {
+                "score": all_probs[i][all_preds[i]],
+                "prob": all_probs[i],
+                "category_id": all_preds[i],
+                "image_id": image_id
+            }        
+            acts_dset.add_annotation(**ann)  
+        acts_dset.dump(acts_dset.fpath, newlines=True)  
+
 
         #
         # Plot per-video class predictions vs. GT across progressive frames in
