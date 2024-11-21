@@ -381,11 +381,8 @@ class PlotMetrics(Callback):
             sorted_img_ids_for_one_video = acts_dset.index.vidid_to_gids[int(video_id)]
             image_id = sorted_img_ids_for_one_video[frame_index]
             # Sanity check: this image_id corresponds to the frame_index and video_id
-            try:
-                assert acts_dset.index.imgs[image_id]['frame_index'] == frame_index
-                assert acts_dset.index.imgs[image_id]['video_id'] == video_id
-            except:
-                import ipdb; ipdb.set_trace()
+            assert acts_dset.index.imgs[image_id]['frame_index'] == frame_index
+            assert acts_dset.index.imgs[image_id]['video_id'] == video_id
 
             acts_dset.add_annotation(
                 image_id=image_id,
