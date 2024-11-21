@@ -360,8 +360,6 @@ class PlotMetrics(Callback):
         all_source_vids = torch.cat(self._val_all_source_vids)  # shape: #frames
         all_source_frames = torch.cat(self._val_all_source_frames)  # shape: #frames
 
-        #import ipdb; ipdb.set_trace()
-
         current_epoch = pl_module.current_epoch
         test_acc = pl_module.test_acc.compute()
         test_f1 = pl_module.test_f1.compute()
