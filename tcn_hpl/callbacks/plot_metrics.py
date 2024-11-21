@@ -371,8 +371,8 @@ class PlotMetrics(Callback):
         acts_dset.fpath = self._preds_dset_output_fpath
         acts_dset.dataset['videos'] = truth_dset.dataset['videos']
         acts_dset.dataset['images'] = truth_dset.dataset['images']
-        acts_dset.index.build(acts_dset)
         acts_dset.dataset['categories'] = truth_dset.dataset['categories']
+        acts_dset.index.build(acts_dset)
         # Create numpy lookup tables
         for i in range(len(all_preds)):
             frame_index = all_source_frames[i].item()
