@@ -387,13 +387,12 @@ class PlotMetrics(Callback):
             except:
                 import ipdb; ipdb.set_trace()
 
-            ann = {
-                "image_id": image_id,
-                "category_id": all_preds[i].item(),
-                "score": all_probs[i][all_preds[i]].item(),
-                "prob": all_probs[i].numpy().tolist(),
-            }
-            acts_dset.add_annotation(**ann)  
+            acts_dset.add_annotation(
+                image_id=image_id,
+                category_id=all_preds[i].item(),
+                score=all_probs[i][all_preds[i]].item(),
+                prob=all_probs[i].numpy().tolist(),
+            )  
         print(f"Dumping activities file to {acts_dset.fpath}")
         acts_dset.dump(acts_dset.fpath, newlines=True)  
 
