@@ -521,9 +521,10 @@ def test_dataset_for_input(
     # TODO: Some method of configuring which vectorizer to use.
     from tcn_hpl.data.vectorize.locs_and_confs import LocsAndConfs
 
+    num_object_classes = len(dets_coco.cats)
     vectorize = LocsAndConfs(
         top_k=1,
-        num_classes=7,
+        num_classes=num_object_classes,
         use_joint_confs=True,
         use_pixel_norm=True,
         use_joint_obj_offsets=False,
@@ -568,6 +569,7 @@ def test_dataset_for_input(
 
     logger.info("+" * 60)
     window_vecs = dataset[0]
+    logger.info(f"Number of object classes: {num_object_classes}")
     logger.info(f"Number of windows: {len(dataset)}")
     logger.info(f"Feature vector dims: {window_vecs[0].shape[1]}")
     logger.info("+" * 60)
