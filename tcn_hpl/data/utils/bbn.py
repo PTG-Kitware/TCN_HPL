@@ -152,8 +152,20 @@ def convert_truth_to_array(
                 assert (
                     start_frame <= end_frame
                 ), f"Found start/end violation ({start_frame} !< {end_frame}) in {text_filepath}"
+                matching_steps = [k for k in id_mapping if description.startswith(k)]
+                if len(matching_steps) == 0:
+                    raise RuntimeError(
+                        f"No matching step for description in file '{text_filepath}': {description}"
+                    )
+                elif len(matching_steps) > 1:
+                    raise RuntimeError(
+                        f"More than one step matched description in file '{text_filepath}': {description}"
+                    )
+                if description != matching_steps[0]:
+                    warnings.warn(f"Inexact match for step description in file: {text_filepath}")
+                    warnings.warn(f"'{description}' != '{matching_steps[0]}'")
                 try:
-                    step_id = id_mapping[description]
+                    step_id = id_mapping[matching_steps[0]]
                 except KeyError:
                     warnings.warn(f"Found key error in truth file: {text_filepath}")
                     raise
