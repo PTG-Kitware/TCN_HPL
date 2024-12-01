@@ -144,11 +144,11 @@ class MultiStageModelResidual(nn.Module):
         out = self.stage1(x, mask)
         # out shape: (batch_size, num_classes, window_size)
         outputs = out.unsqueeze(0)
-        for s in self.stages:
+        for stage in self.stages:
             s_in = out
             if self.do_stage_softmax:
                 s_in = F.softmax(s_in, dim=1)
-            s_out = s(s_in * mask[:, None, :], mask)
+            s_out = stage(s_in * mask[:, None, :], mask)
             if self.do_stage_residual:
                 s_out = out + s_out
             out = s_out  # update the temp "out" var for cross-loop interaction

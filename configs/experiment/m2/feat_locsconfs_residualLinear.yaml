@@ -37,9 +37,14 @@ model:
   _target_: tcn_hpl.models.components.ms_tcs_net.MultiStageModelResidual
   num_classes: 9  # number of activity classification classes
   linear_single_stage: true
-  num_layers: 24  # window_size - 1, for largest residual
-  do_stage_residual: true
-  do_stage_softmax: false
+  # 12 here allows for the largest residual layer to cover the first, middle
+  # and last window index when in the middle of its convolutional sweep.
+  num_layers: 12
+  # These do_* booleans match the behavior of the original MultiStageModule.
+  do_stage_softmax: true
+  do_stage_residual: false
+  # This should stay false, related functionality is not available in torch
+  # version used.
   compile: false
   scheduler:
     # Code change to track train/loss instead of val/loss.
