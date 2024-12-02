@@ -38,6 +38,8 @@ model:
   # This should stay false, related functionality is not available in torch
   # version used.
   compile: false
+  optimizer:
+    lr: 0.00005
   scheduler:
     # Code change to track train/loss instead of val/loss.
     factor: 0.9
