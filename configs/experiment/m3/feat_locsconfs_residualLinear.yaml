@@ -45,15 +45,12 @@ model:
     factor: 0.9
     patience: 10
   net:
-    _target_: tcn_hpl.models.components.ms_tcs_net.MultiStageModelResidual
+    _target_: tcn_hpl.models.components.ms_tcs_net.MultiStageModel2
     # Utilize "linear" dilation layers instead of exponential ones.
     linear_single_stage: true
     # 12 here allows for the largest residual layer to cover the first, middle
     # and last window index when in the middle of its convolutional sweep.
     num_layers: 12
-    # These do_* booleans match the behavior of the original MultiStageModule.
-    do_stage_softmax: true
-    do_stage_residual: false
     # Length of feature vector for a single frame.
     # Currently derived from the parameterization of dataset vectorizer.
     dim: 97
