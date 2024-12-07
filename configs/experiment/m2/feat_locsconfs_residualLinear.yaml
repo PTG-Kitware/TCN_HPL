@@ -51,6 +51,9 @@ model:
     # 12 here allows for the largest residual layer to cover the first, middle
     # and last window index when in the middle of its convolutional sweep.
     num_layers: 12
+    # These do_* booleans match the behavior of the original MultiStageModule.
+    do_stage_softmax: true
+    do_stage_residual: false
     # Length of feature vector for a single frame.
     # Currently derived from the parameterization of dataset vectorizer.
     dim: 102
