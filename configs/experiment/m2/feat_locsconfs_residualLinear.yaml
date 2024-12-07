@@ -24,7 +24,7 @@ defaults:
 # simply provide checkpoint path to resume training
 #ckpt_path: null
 
-tags: ["m3", "ms_tcn", "debug"]
+tags: ["m2", "ms_tcn", "debug"]
 
 seed: 12345
 
@@ -34,7 +34,9 @@ trainer:
   log_every_n_steps: 1
 
 model:
-  num_classes: 6  # number of activity classification classes
+  num_classes: 9  # number of activity classification classes
+  # This should stay false, related functionality is not available in torch
+  # version used.
   compile: false
   optimizer:
     lr: 0.00005
@@ -43,9 +45,18 @@ model:
     factor: 0.9
     patience: 10
   net:
+    _target_: tcn_hpl.models.components.ms_tcs_net.MultiStageModel2
+    # Utilize "linear" dilation layers instead of exponential ones.
+    linear_single_stage: true
+    # 12 here allows for the largest residual layer to cover the first, middle
+    # and last window index when in the middle of its convolutional sweep.
+    num_layers: 12
+    # These do_* booleans match the behavior of the original MultiStageModule.
+    do_stage_softmax: true
+    do_stage_residual: false
     # Length of feature vector for a single frame.
     # Currently derived from the parameterization of dataset vectorizer.
-    dim: 97
+    dim: 102
 
 data:
   coco_train_activities: "${paths.coco_file_root}/TRAIN-activity_truth.coco.json"
@@ -71,7 +82,7 @@ data:
     vectorize:
       _target_: tcn_hpl.data.vectorize.locs_and_confs.LocsAndConfs
       top_k: 1
-      num_classes: 6
+      num_classes: 7
       use_joint_confs: True
       use_pixel_norm: True
       use_joint_obj_offsets: False
