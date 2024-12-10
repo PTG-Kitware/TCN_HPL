@@ -516,6 +516,7 @@ def main(
         pose_model_device=pose_device,
     )
     output_dset = pg.predict_coco(input_dset, img_done_cb)
+    output_coco_filepath.parent.mkdir(parents=True, exist_ok=True)
     output_dset.dump(
         output_coco_filepath,
         newlines=True,
