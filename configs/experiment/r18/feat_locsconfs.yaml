@@ -43,6 +43,7 @@ model:
     factor: 0.9
     patience: 10
   net:
+    num_stages: 6
     # Length of feature vector for a single frame.
     # Currently derived from the parameterization of dataset vectorizer.
     dim: 102
