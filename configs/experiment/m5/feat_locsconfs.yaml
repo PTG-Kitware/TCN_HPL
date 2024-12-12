@@ -24,7 +24,7 @@ defaults:
 # simply provide checkpoint path to resume training
 #ckpt_path: null
 
-tags: ["m3", "ms_tcn", "debug"]
+tags: ["m5", "ms_tcn", "debug"]
 
 seed: 12345
 

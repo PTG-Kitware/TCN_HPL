@@ -35,6 +35,8 @@ trainer:
 
 model:
   num_classes: 6  # number of activity classification classes
+  # This should stay false, related functionality is not available in torch
+  # version used.
   compile: false
   optimizer:
     lr: 0.00005
@@ -43,6 +45,10 @@ model:
     factor: 0.9
     patience: 10
   net:
+    _target_: tcn_hpl.models.components.ms_tcs_net.MultiStageModel2
+    # Utilize "linear" dilation layers instead of exponential ones.
+    constant_single_stage: true
+    constant_stage_dilation: 1
     # Length of feature vector for a single frame.
     # Currently derived from the parameterization of dataset vectorizer.
     dim: 97

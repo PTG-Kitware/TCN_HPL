@@ -36,11 +36,14 @@ trainer:
 model:
   num_classes: 6  # number of activity classification classes
   compile: false
+  optimizer:
+    lr: 0.00005
   scheduler:
     # Code change to track train/loss instead of val/loss.
     factor: 0.9
     patience: 10
   net:
+    num_stages: 6
     # Length of feature vector for a single frame.
     # Currently derived from the parameterization of dataset vectorizer.
     dim: 102
