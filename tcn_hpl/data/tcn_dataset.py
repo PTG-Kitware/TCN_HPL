@@ -521,7 +521,7 @@ def test_dataset_for_input(
     # TODO: Some method of configuring which vectorizer to use.
     from tcn_hpl.data.vectorize.locs_and_confs import LocsAndConfs
 
-    num_object_classes = len(dets_coco.cats)
+    num_object_classes = max(dets_coco.cats) + 1
     vectorize = LocsAndConfs(
         top_k=1,
         num_classes=num_object_classes,
